@@ -13,7 +13,7 @@ TG_TOKEN = os.getenv('TG_TOKEN')
 PORT = int(os.getenv('PORT', 8080))
 
 bot = telebot.TeleBot(TG_TOKEN)
-app = Flask(name)
+app = Flask(__name__)
 
 # Хранилище состояний пользователей: {chat_id: {...}}
 user_data = {}
