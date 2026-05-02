@@ -195,7 +195,7 @@ def run_bot():
     print("[Bot] Запуск infinity_polling...")
     bot.infinity_polling(timeout=60, long_polling_timeout=60)
 
-if name == 'main':
+if __name__ == '__main__':
     # Бот работает в отдельном потоке, Flask — в главном
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
