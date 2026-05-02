@@ -6,27 +6,26 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def send_to_vk_groups(message_text, photo_paths):
+def send_to_vk_groups(message_text, photo_paths, category='usual'):
     """
-    Отправляет пост во все группы из переменных окружения.
-    - GROUPS_USUAL и GROUPS_LARGE — списки ID групп через запятую (с минусом, например -12345678)
-    - VK_TOKEN — токен сообщества
+    Публикует пост в группы выбранной категории.
+    Использует токен сообщества, хранящийся в VK_TOKEN.
     """
+    token = os.getenv("VK_TOKEN")
+    if not token:
+        return "❌ Ошибка: VK_TOKEN не задан"
+
+    # Получаем списки групп из переменных окружения
     usual_raw = os.getenv("GROUPS_USUAL", "")
     large_raw = os.getenv("GROUPS_LARGE", "")
-    
     group_ids = []
-    if usual_raw:
-        group_ids.extend([int(gid.strip()) for gid in usual_raw.split(",") if gid.strip()])
-    if large_raw:
-        group_ids.extend([int(gid.strip()) for gid in large_raw.split(",") if gid.strip()])
+    if category == 'usual':
+        group_ids = [int(gid.strip()) for gid in usual_raw.split(",") if gid.strip()]
+    else:
+        group_ids = [int(gid.strip()) for gid in large_raw.split(",") if gid.strip()]
 
-    token = os.getenv("VK_TOKEN")
-
-    if not token:
-        return "❌ Нет VK_TOKEN"
     if not group_ids:
-        return "❌ Нет групп для отправки"
+        return f"❌ Ошибка: нет групп в категории '{category}'"
 
     try:
         vk_session = vk_api.VkApi(token=token)
@@ -36,26 +35,22 @@ def send_to_vk_groups(message_text, photo_paths):
         # Загрузка фото
         attachments = []
         for path in photo_paths:
-            if not os.path.exists(path):
-                continue
-            photo = upload.photo_wall(path)[0]
-            attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
+            if os.path.exists(path):
+                photo = upload.photo_wall(path)[0]
+                attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
         attachments_str = ",".join(attachments)
 
+        # Публикация в каждую группу
         results = []
         for gid in group_ids:
             try:
                 vk.wall.post(owner_id=gid, message=message_text, attachments=attachments_str)
-                results.append(f"✅ Группа {gid}: пост опубликован")
-                logger.info(f"Пост в {gid} отправлен")
+                results.append(f"✅ Группа {gid}: пост опубликован.")
             except vk_api.exceptions.ApiError as e:
-                err = str(e)
-                results.append(f"❌ Группа {gid}: ошибка — {err[:100]}")
-                logger.error(f"Ошибка в группе {gid}: {err}")
+                results.append(f"❌ Группа {gid}: ошибка VK — {str(e)[:100]}")
             time.sleep(1)
 
         return "\n".join(results)
-
     except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
+        logger.error(f"Критическая ошибка публикации: {e}")
         return f"🔥 Критическая ошибка: {e}"
