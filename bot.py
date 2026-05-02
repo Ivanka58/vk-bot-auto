@@ -260,7 +260,8 @@ def index():
 def run_bot():
     reset_webhook()
     print(f"[Bot] Запуск infinity_polling... (PORT={PORT})")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60, non_stop=True)
+    # УБРАН non_stop=True — в этой версии библиотеки он уже внутри infinity_polling
+    bot.infinity_polling(timeout=60, long_polling_timeout=60)
 
 if __name__ == '__main__':
     print(f"[Server] Запуск Flask на 0.0.0.0:{PORT}")
