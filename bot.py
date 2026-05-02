@@ -122,7 +122,7 @@ def confirm_step(message):
 
 # --- ЗАПУСК ---
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 80))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
