@@ -1,6 +1,6 @@
 import os
 import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 import requests
 import threading
 from flask import Flask
@@ -10,18 +10,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TG_TOKEN = os.getenv('TG_TOKEN')
-PORT = int(os.getenv('PORT', 8080))
+
+# --- ПОРТ ДЛЯ AMVERA: если в env null/пусто — ставим 80 ---
+raw_port = os.getenv('PORT')
+try:
+    PORT = int(raw_port) if raw_port and raw_port.lower() not in ('null', '', 'none') else 80
+except ValueError:
+    PORT = 80
+# ---------------------------------------------------------
 
 bot = telebot.TeleBot(TG_TOKEN)
 app = Flask(__name__)
 
-# Хранилище состояний пользователей: {chat_id: {...}}
+# Хранилище состояний
 user_data = {}
 
 # ─── Вспомогательные функции ───
 
 def reset_webhook():
-    """Сброс вебхука перед запуском polling (решает ошибку 409)."""
     try:
         url = f"https://api.telegram.org/bot{TG_TOKEN}/setWebhook?url="
         r = requests.get(url, timeout=10)
@@ -49,142 +55,203 @@ def confirm_kb():
     kb.add(KeyboardButton("Готово ☑️"), KeyboardButton("Изменить"))
     return kb
 
+def safe_send(chat_id, text, reply_markup=None):
+    """Безопасная отправка сообщения с логированием ошибок."""
+    try:
+        bot.send_message(chat_id, text, reply_markup=reply_markup)
+    except Exception as e:
+        print(f"[safe_send] Ошибка отправки в {chat_id}: {e}")
+
 # ─── Обработчики ───
 
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {'state': 'main'}
-    bot.send_message(
-        chat_id,
-        "👋 Привет! Я бот для публикации объявлений в группы ВКонтакте.\n\n"
-        "Нажмите кнопку ниже, чтобы начать.",
-        reply_markup=main_kb()
-    )
+    try:
+        chat_id = message.chat.id
+        user_data[chat_id] = {'state': 'main'}
+        print(f"[START] Пользователь {chat_id}")
+        bot.send_message(
+            chat_id,
+            "👋 Привет! Я бот для публикации объявлений в группы ВКонтакте.\n\n"
+            "Нажмите кнопку ниже, чтобы начать.",
+            reply_markup=main_kb()
+        )
+    except Exception as e:
+        print(f"[START ERROR] {e}")
 
 @bot.message_handler(func=lambda m: m.text == "Отправить объявление")
 def send_ad(message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {'state': 'category', 'photos': [], 'text': '', 'category': None}
-    bot.send_message(chat_id, "Выберите категорию групп:", reply_markup=category_kb())
+    try:
+        chat_id = message.chat.id
+        user_data[chat_id] = {'state': 'category', 'photos': [], 'text': '', 'category': None}
+        print(f"[SEND_AD] Пользователь {chat_id} начал создание объявления")
+        bot.send_message(chat_id, "Выберите категорию групп:", reply_markup=category_kb())
+    except Exception as e:
+        print(f"[SEND_AD ERROR] {e}")
 
 @bot.message_handler(func=lambda m: m.text in ["📁 Обычные группы", "⭐ Крупные группы"])
 def choose_category(message):
-    chat_id = message.chat.id
-    if chat_id not in user_data or user_data[chat_id].get('state') != 'category':
-        return
+    try:
+        chat_id = message.chat.id
+        if chat_id not in user_data or user_data[chat_id].get('state') != 'category':
+            return
 
-    category = 'usual' if 'Обычные' in message.text else 'large'
-    user_data[chat_id]['category'] = category
-    user_data[chat_id]['state'] = 'photo'
+        category = 'usual' if 'Обычные' in message.text else 'large'
+        user_data[chat_id]['category'] = category
+        user_data[chat_id]['state'] = 'photo'
 
-    bot.send_message(
-        chat_id,
-        "📷 Отправьте фото (до 10 шт.).\nКогда закончите — нажмите кнопку ниже.",
-        reply_markup=photo_kb()
-    )
+        print(f"[CATEGORY] Пользователь {chat_id} выбрал {category}")
+        bot.send_message(
+            chat_id,
+            "📷 Отправьте фото (до 10 шт.).\nКогда закончите — нажмите кнопку ниже.",
+            reply_markup=photo_kb()
+        )
+    except Exception as e:
+        print(f"[CATEGORY ERROR] {e}")
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    chat_id = message.chat.id
-    if chat_id not in user_data or user_data[chat_id].get('state') != 'photo':
-        return
+    try:
+        chat_id = message.chat.id
+        if chat_id not in user_data or user_data[chat_id].get('state') != 'photo':
+            return
 
-    photos = user_data[chat_id]['photos']
-    if len(photos) >= 10:
-        bot.send_message(chat_id, "❌ Достигнут лимит в 10 фото. Нажмите «Закончить отправку фото ✅»")
-        return
+        photos = user_data[chat_id]['photos']
+        if len(photos) >= 10:
+            bot.send_message(chat_id, "❌ Достигнут лимит в 10 фото. Нажмите «Закончить отправку фото ✅»")
+            return
 
-    # Берём фото максимального качества (последний элемент в списке)
-    file_info = bot.get_file(message.photo[-1].file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+        # Берём фото максимального качества
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
 
-    temp_dir = f"temp/{chat_id}"
-    os.makedirs(temp_dir, exist_ok=True)
+        temp_dir = f"temp/{chat_id}"
+        os.makedirs(temp_dir, exist_ok=True)
 
-    file_path = os.path.join(temp_dir, f"photo_{len(photos)}.jpg")
-    with open(file_path, 'wb') as f:
-        f.write(downloaded_file)
+        file_path = os.path.join(temp_dir, f"photo_{len(photos)}.jpg")
+        with open(file_path, 'wb') as f:
+            f.write(downloaded_file)
 
-    photos.append(file_path)
-    user_data[chat_id]['photos'] = photos
+        photos.append(file_path)
+        user_data[chat_id]['photos'] = photos
 
-    bot.send_message(
-        chat_id,
-        f"📷 Фото {len(photos)}/10 получено. Можете отправить ещё или нажать «Закончить отправку фото ✅»",
-        reply_markup=photo_kb()
-    )
+        print(f"[PHOTO] Пользователь {chat_id} отправил фото {len(photos)}/10")
+        bot.send_message(
+            chat_id,
+            f"📷 Фото {len(photos)}/10 получено. Можете отправить ещё или нажать «Закончить отправку фото ✅»",
+            reply_markup=photo_kb()
+        )
+    except Exception as e:
+        print(f"[PHOTO ERROR] {e}")
+        safe_send(message.chat.id, f"🔥 Ошибка при сохранении фото: {e}")
 
 @bot.message_handler(func=lambda m: m.text == "Закончить отправку фото ✅")
 def finish_photos(message):
-    chat_id = message.chat.id
-    if chat_id not in user_data or user_data[chat_id].get('state') != 'photo':
-        return
+    try:
+        chat_id = message.chat.id
+        if chat_id not in user_data or user_data[chat_id].get('state') != 'photo':
+            return
 
-    if len(user_data[chat_id]['photos']) == 0:
-        bot.send_message(chat_id, "❌ Вы не отправили ни одного фото. Отправьте хотя бы одно.")
-        return
+        if len(user_data[chat_id]['photos']) == 0:
+            bot.send_message(chat_id, "❌ Вы не отправили ни одного фото. Отправьте хотя бы одно.")
+            return
+
         user_data[chat_id]['state'] = 'text'
-    bot.send_message(
-        chat_id,
-        "✏️ Теперь отправьте текст объявления:",
-        reply_markup=telebot.types.ReplyKeyboardRemove()
-    )
+        print(f"[FINISH_PHOTOS] Пользователь {chat_id} закончил отправку фото")
+        bot.send_message(
+            chat_id,
+            "✏️ Теперь отправьте текст объявления:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    except Exception as e:
+        print(f"[FINISH_PHOTOS ERROR] {e}")
+        safe_send(chat_id, f"🔥 Ошибка: {e}")
 
 @bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'text')
 def handle_text(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['text'] = message.text
-    user_data[chat_id]['state'] = 'confirm'
+    try:
+        chat_id = message.chat.id
+        user_text = message.text
 
-    preview = (
-        f"📋 Предпросмотр объявления:\n\n"
-        f"{message.text}\n\n"
-        f"📷 Прикреплено фото: {len(user_data[chat_id]['photos'])}"
-    )
-    bot.send_message(chat_id, preview, reply_markup=confirm_kb())
+        print(f"[TEXT] Пользователь {chat_id} отправил текст: {user_text[:50]}...")
+        user_data[chat_id]['text'] = user_text
+        user_data[chat_id]['state'] = 'confirm'
+
+        preview = (
+            f"📋 Предпросмотр объявления:\n\n"
+            f"{user_text}\n\n"
+            f"📷 Прикреплено фото: {len(user_data[chat_id]['photos'])}"
+        )
+        bot.send_message(chat_id, preview, reply_markup=confirm_kb())
+    except Exception as e:
+        print(f"[TEXT ERROR] {e}")
+        safe_send(chat_id, f"🔥 Ошибка при обработке текста: {e}")
 
 @bot.message_handler(func=lambda m: m.text == "Готово ☑️")
 def confirm_send(message):
-    chat_id = message.chat.id
-    if chat_id not in user_data or user_data[chat_id].get('state') != 'confirm':
-        return
-
-    data = user_data[chat_id]
-    bot.send_message(chat_id, "⏳ Отправляю объявления в группы ВК...")
-
     try:
-        report = send_to_vk_groups(data['text'], data['photos'], data['category'])
-        bot.send_message(chat_id, f"📋 Отправка завершена!\n\n{report}", reply_markup=main_kb())
+        chat_id = message.chat.id
+        if chat_id not in user_data or user_data[chat_id].get('state') != 'confirm':
+            return
+
+        data = user_data[chat_id]
+        print(f"[CONFIRM] Пользователь {chat_id} подтвердил отправку")
+        bot.send_message(chat_id, "⏳ Отправляю объявления в группы ВК...")
+
+        try:
+            report = send_to_vk_groups(data['text'], data['photos'], data['category'])
+            bot.send_message(chat_id, f"📋 Отправка завершена!\n\n{report}", reply_markup=main_kb())
+        except Exception as e:
+            err_msg = str(e)
+            print(f"[VK ERROR] {err_msg}")
+            bot.send_message(chat_id, f"🔥 Критическая ошибка при отправке в ВК:\n{err_msg}", reply_markup=main_kb())
+        finally:
+            # Удаляем временные файлы
+            for p in data.get('photos', []):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        print(f"[CLEANUP] Удалён файл: {p}")
+                except Exception as e:
+                    print(f"[CLEANUP ERROR] {e}")
+            # Сбрасываем состояние
+            user_data[chat_id] = {'state': 'main'}
     except Exception as e:
-        bot.send_message(chat_id, f"🔥 Критическая ошибка: {str(e)}", reply_markup=main_kb())
-    finally:
-        # Удаляем временные файлы
-        for p in data.get('photos', []):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except Exception as e:
-                print(f"[Cleanup] Не удалось удалить {p}: {e}")
-        # Сбрасываем состояние
-        user_data[chat_id] = {'state': 'main'}
+        print(f"[CONFIRM ERROR] {e}")
+        safe_send(message.chat.id, f"🔥 Внутренняя ошибка: {e}")
 
 @bot.message_handler(func=lambda m: m.text == "Изменить")
 def reset_ad(message):
+    try:
+        chat_id = message.chat.id
+        # Удаляем ранее сохранённые фото
+        if chat_id in user_data:
+            for p in user_data[chat_id].get('photos', []):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except:
+                    pass
+
+        user_data[chat_id] = {'state': 'category', 'photos': [], 'text': '', 'category': None}
+        print(f"[RESET] Пользователь {chat_id} сбросил объявление")
+        bot.send_message(chat_id, "Выберите категорию групп:", reply_markup=category_kb())
+    except Exception as e:
+        print(f"[RESET ERROR] {e}")
+
+# ─── Fallback: если сообщение не попало ни в один хендлер ───
+@bot.message_handler(func=lambda m: True)
+def fallback(message):
     chat_id = message.chat.id
-    # Удаляем ранее сохранённые фото
-    if chat_id in user_data:
-        for p in user_data[chat_id].get('photos', []):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except:
-                pass
+    state = user_data.get(chat_id, {}).get('state', 'unknown')
+    print(f"[FALLBACK] Пользователь {chat_id}, состояние '{state}', текст: {message.text}")
+    bot.send_message(
+        chat_id,
+        "❓ Я не понял команду. Если что-то пошло не так — нажмите /start",
+        reply_markup=main_kb()
+    )
 
-    user_data[chat_id] = {'state': 'category', 'photos': [], 'text': '', 'category': None}
-    bot.send_message(chat_id, "Выберите категорию групп:", reply_markup=category_kb())
-
-# ─── Flask keep-alive (для хостингов типа Render / Railway) ───
+# ─── Flask keep-alive ───
 
 @app.route('/')
 def index():
@@ -192,11 +259,11 @@ def index():
 
 def run_bot():
     reset_webhook()
-    print("[Bot] Запуск infinity_polling...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    print(f"[Bot] Запуск infinity_polling... (PORT={PORT})")
+    bot.infinity_polling(timeout=60, long_polling_timeout=60, non_stop=True)
 
 if __name__ == '__main__':
-    # Бот работает в отдельном потоке, Flask — в главном
+    print(f"[Server] Запуск Flask на 0.0.0.0:{PORT}")
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
