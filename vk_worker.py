@@ -1,91 +1,77 @@
 import os
 import vk_api
-import requests
-import time
-import logging
-
-# Настройка логирования прямо в файле
-logger = logging.getLogger(__name__)
+from vk_api.upload import VkUpload
 
 def send_to_vk_groups(message_text, photo_paths, category='usual'):
     """
-    Публикует пост в группы выбранной категории.
-    Использует токен сообщества, хранящийся в VK_TOKEN.
+    Загружает фото и публикует пост в предложку групп ВК.
+    Возвращает многострочный отчёт.
     """
-    print("🚀 [DEBUG] send_to_vk_groups вызвана")
-    print(f"📝 [DEBUG] Текст: {message_text[:100] if message_text else 'Нет текста'}...")
-    print(f"📂 [DEBUG] Категория: {category}")
-    print(f"🖼️ [DEBUG] Количество фото: {len(photo_paths)}")
-    print(f"🖼️ [DEBUG] Пути к фото: {photo_paths}")
+    print("=" * 60)
+    print("[VK] Начало отправки")
 
-    token = os.getenv("VK_TOKEN")
-    print(f"🔑 [DEBUG] Токен из env: {'Получен' if token else 'НЕ ПОЛУЧЕН'}")
+    token = os.getenv('VK_TOKEN')
+    groups_usual = os.getenv('GROUPS_USUAL', '')
+    groups_large = os.getenv('GROUPS_LARGE', '')
 
     if not token:
-        return "❌ Ошибка: VK_TOKEN не задан"
+        raise Exception("VK_TOKEN не найден в переменных окружения")
 
-    # Получаем списки групп из переменных окружения
-    usual_raw = os.getenv("GROUPS_USUAL", "")
-    large_raw = os.getenv("GROUPS_LARGE", "")
-    print(f"📋 [DEBUG] GROUPS_USUAL raw: '{usual_raw}'")
-    print(f"📋 [DEBUG] GROUPS_LARGE raw: '{large_raw}'")
+    groups_str = groups_usual if category == 'usual' else groups_large
+    if not groups_str:
+        raise Exception(f"GROUPS_{category.upper()} не заданы в .env")
 
-    group_ids = []
-    if category == 'usual':
-        group_ids = [int(gid.strip()) for gid in usual_raw.split(",") if gid.strip()]
-        print(f"📋 [DEBUG] Обычные группы (после парсинга): {group_ids}")
-    else:
-        group_ids = [int(gid.strip()) for gid in large_raw.split(",") if gid.strip()]
-        print(f"📋 [DEBUG] Крупные группы (после парсинга): {group_ids}")
+    groups = [g.strip() for g in groups_str.split(',') if g.strip()]
+    print(f"[VK] ID групп ({category}): {groups}")
 
-    if not group_ids:
-        return f"❌ Ошибка: нет групп в категории '{category}'"
+    # Инициализация сессии
+    vk_session = vk_api.VkApi(token=token)
+    vk = vk_session.get_api()
+    upload = VkUpload(vk_session)
 
-    try:
-        print("🔄 [DEBUG] Создаю сессию VK...")
-        vk_session = vk_api.VkApi(token=token)
-        vk = vk_session.get_api()
-        upload = vk_api.VkUpload(vk_session)
-        print("✅ [DEBUG] Сессия VK создана")
+    # ─── Загрузка фото ───
+    attachments = []
+    print(f"[VK] Загрузка {len(photo_paths)} фото...")
 
-        # Загрузка фото
-        attachments = []
-        for idx, path in enumerate(photo_paths):
-            print(f"🖼️ [DEBUG] Обработка фото {idx+1}: {path}")
-            if os.path.exists(path):
-                print(f"✅ [DEBUG] Файл {path} найден, загружаю...")
-                try:
-                    photo = upload.photo_wall(path)[0]
-                    attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
-                    print(f"✅ [DEBUG] Фото {idx+1} загружено: {attachments[-1]}")
-                except Exception as e:
-                    print(f"❌ [DEBUG] Ошибка загрузки фото {idx+1}: {e}")
-            else:
-                print(f"❌ [DEBUG] Файл {path} НЕ НАЙДЕН, пропускаю")
-        attachments_str = ",".join(attachments)
-        print(f"🖼️ [DEBUG] Итоговые вложения: {attachments_str}")
+    for path in photo_paths:
+        if not os.path.exists(path):
+            print(f"[VK] ⚠️ Файл не существует: {path}")
+            continue
 
-        # Публикация в каждую группу
-        results = []
-        for gid in group_ids:
-            print(f"📤 [DEBUG] Публикую в группу {gid}...")
-            try:
-                vk.wall.post(owner_id=gid, message=message_text, attachments=attachments_str)
-                results.append(f"✅ Группа {gid}: пост опубликован.")
-                print(f"✅ [DEBUG] Успешно опубликовано в {gid}")
-            except vk_api.exceptions.ApiError as e:
-                error_msg = str(e)
-                results.append(f"❌ Группа {gid}: ошибка VK — {error_msg[:100]}")
-                print(f"❌ [DEBUG] Ошибка VK для группы {gid}: {error_msg}")
-            except Exception as e:
-                error_msg = str(e)
-                results.append(f"❌ Группа {gid}: ошибка — {error_msg[:100]}")
-                print(f"❌ [DEBUG] Общая ошибка для группы {gid}: {error_msg}")
-            time.sleep(1)
+        try:
+            photo = upload.photo_wall(path)
+            owner_id = photo[0]['owner_id']
+            photo_id = photo[0]['id']
+            attachments.append(f"photo{owner_id}_{photo_id}")
+            print(f"[VK] ✅ Фото загружено: photo{owner_id}_{photo_id}")
+        except Exception as e:
+            print(f"[VK] ❌ Ошибка загрузки фото {path}: {e}")
 
-        print("✅ [DEBUG] Публикация завершена")
-        return "\n".join(results)
+    if not attachments:
+        raise Exception("Не удалось загрузить ни одного фото")
 
-    except Exception as e:
-        print(f"🔥 [DEBUG] Критическая ошибка в send_to_vk_groups: {e}")
-        return f"🔥 Критическая ошибка: {e}"
+    attachments_str = ','.join(attachments)
+    print(f"[VK] Итоговые вложения: {attachments_str}")
+
+    # ─── Постинг в группы ───
+    report_lines = []
+
+    for group_id in groups:
+        try:
+            print(f"[VK] Отправка в группу {group_id}...")
+            # owner_id со знаком минус → пост уходит в предложку группы
+            vk.wall.post(
+                owner_id=int(group_id),
+                message=message_text,
+                attachments=attachments_str
+            )
+            report_lines.append(f"✅ Группа {group_id}: пост опубликован.")
+            print(f"[VK] ✅ Успешно: {group_id}")
+        except Exception as e:
+            err = str(e)
+            report_lines.append(f"❌ Группа {group_id}: ошибка — {err}")
+            print(f"[VK] ❌ Ошибка в {group_id}: {err}")
+
+    print("[VK] Отправка завершена")
+    print("=" * 60)
+    return '\n'.join(report_lines)
