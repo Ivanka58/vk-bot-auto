@@ -56,7 +56,6 @@ def confirm_kb():
     return kb
 
 def safe_send(chat_id, text, reply_markup=None):
-    """Безопасная отправка сообщения с логированием ошибок."""
     try:
         bot.send_message(chat_id, text, reply_markup=reply_markup)
     except Exception as e:
@@ -135,7 +134,10 @@ def handle_photo(message):
         photos.append(file_path)
         user_data[chat_id]['photos'] = photos
 
-        print(f"[PHOTO] Пользователь {chat_id} отправил фото {len(photos)}/10")
+        # ПРОВЕРКА: выводим в логи путь и размер
+        file_size = os.path.getsize(file_path)
+        print(f"[PHOTO] Сохранено: {file_path} | Размер: {file_size} байт | Всего: {len(photos)}")
+
         bot.send_message(
             chat_id,
             f"📷 Фото {len(photos)}/10 получено. Можете отправить ещё или нажать «Закончить отправку фото ✅»",
@@ -157,7 +159,7 @@ def finish_photos(message):
             return
 
         user_data[chat_id]['state'] = 'text'
-        print(f"[FINISH_PHOTOS] Пользователь {chat_id} закончил отправку фото")
+        print(f"[FINISH_PHOTOS] Пользователь {chat_id} закончил отправку фото. Файлы: {user_data[chat_id]['photos']}")
         bot.send_message(
             chat_id,
             "✏️ Теперь отправьте текст объявления:",
@@ -196,6 +198,7 @@ def confirm_send(message):
 
         data = user_data[chat_id]
         print(f"[CONFIRM] Пользователь {chat_id} подтвердил отправку")
+        print(f"[CONFIRM] Передаём в vk_worker: {len(data['photos'])} фото, текст: {data['text'][:50]}...")
         bot.send_message(chat_id, "⏳ Отправляю объявления в группы ВК...")
 
         try:
@@ -224,7 +227,6 @@ def confirm_send(message):
 def reset_ad(message):
     try:
         chat_id = message.chat.id
-        # Удаляем ранее сохранённые фото
         if chat_id in user_data:
             for p in user_data[chat_id].get('photos', []):
                 try:
@@ -239,7 +241,7 @@ def reset_ad(message):
     except Exception as e:
         print(f"[RESET ERROR] {e}")
 
-# ─── Fallback: если сообщение не попало ни в один хендлер ───
+# ─── Fallback ───
 @bot.message_handler(func=lambda m: True)
 def fallback(message):
     chat_id = message.chat.id
@@ -260,7 +262,6 @@ def index():
 def run_bot():
     reset_webhook()
     print(f"[Bot] Запуск infinity_polling... (PORT={PORT})")
-    # УБРАН non_stop=True — в этой версии библиотеки он уже внутри infinity_polling
     bot.infinity_polling(timeout=60, long_polling_timeout=60)
 
 if __name__ == '__main__':
