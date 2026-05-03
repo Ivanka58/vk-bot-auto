@@ -30,25 +30,34 @@ def upload_photo_to_wall(vk, path, group_id):
     print(f"[VK] Сохранено: {saved}")
     return saved[0]
 
-def send_to_vk_groups(message_text, photo_paths, category='usual'):
+def send_to_vk_groups(message_text, photo_paths, category='usual', account='accessories'):
     print("=" * 60)
-    print(f"[VK] Старт. Фото: {photo_paths}")
+    print(f"[VK] Старт. Аккаунт: {account}")
+    print(f"[VK] Фото: {photo_paths}")
     print(f"[VK] Текст: {message_text[:80]}...")
     print(f"[VK] Категория: {category}")
 
-    token = os.getenv('VK_TOKEN')
-    groups_usual = os.getenv('GROUPS_USUAL', '')
-    groups_large = os.getenv('GROUPS_LARGE', '')
+    # --- Выбор токена и групп в зависимости от аккаунта ---
+    if account == 'accessories':
+        token = os.getenv('VK_TOKEN')
+        groups_usual = os.getenv('GROUPS_USUAL', '')
+        groups_large = os.getenv('GROUPS_LARGE', '')
+    else:
+        token = os.getenv('VK_TOKEN2')
+        # Если группы для второго аккаунта не заданы — берём основные
+        groups_usual = os.getenv('GROUPS_USUAL2', os.getenv('GROUPS_USUAL', ''))
+        groups_large = os.getenv('GROUPS_LARGE2', os.getenv('GROUPS_LARGE', ''))
+    # -----------------------------------------------------
 
     if not token:
-        raise Exception("VK_TOKEN не найден")
+        raise Exception(f"VK_TOKEN{'2' if account != 'accessories' else ''} не найден")
 
     groups_str = groups_usual if category == 'usual' else groups_large
     if not groups_str:
-        raise Exception(f"GROUPS_{category.upper()} пусты")
+        raise Exception(f"GROUPS_{category.upper()}{'2' if account != 'accessories' and os.getenv('GROUPS_USUAL2') else ''} пусты")
 
     groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-    print(f"[VK] Группы: {groups}")
+    print(f"[VK] Группы ({account}): {groups}")
 
     vk_session = vk_api.VkApi(token=token)
     vk = vk_session.get_api()
@@ -77,7 +86,6 @@ def send_to_vk_groups(message_text, photo_paths, category='usual'):
                 err_msg = str(e)
                 print(f"[VK] ОШИБКА: {err_msg}")
 
-                # Если токен сообщества не подходит — сразу даём инструкцию
                 if any(x in err_msg.lower() for x in ['group auth', 'unavailable with group', 'authorization failed']):
                     raise Exception(
                         "❌ Токен сообщества (группы) НЕ МОЖЕТ загружать фото на стену ВКонтакте.\n\n"
@@ -87,9 +95,8 @@ def send_to_vk_groups(message_text, photo_paths, category='usual'):
                         "3. В поле 'scope' впиши: photos,wall\n"
                         "4. Нажми 'Получить ссылку' → разреши доступ\n"
                         "5. Скопируй access_token из адресной строки\n"
-                        "   (всё что между access_token= и &)\n"
-                        "6. Вставь его в Amvera в переменную VK_TOKEN\n"
-                        "   (замени старый токен сообщества)\n"
+                        "6. Вставь его в Amvera в переменную VK_TOKEN"
+                        f"{'2' if account != 'accessories' else ''}\n"
                         "7. Перезапусти контейнер"
                     )
                 continue
