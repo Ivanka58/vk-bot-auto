@@ -96,7 +96,7 @@ def choose_account(call):
     user_data[chat_id]['account'] = account
     user_data[chat_id]['state'] = 'category'
 
-    name = "Аксессуары" if account == 'accessories' else "Автопродажа"
+    name = "Аксессуары" if account == 'accessories' else "Дашин"
     print(f"[ACCOUNT] Пользователь {chat_id} выбрал: {name}")
 
     bot.answer_callback_query(call.id, f"Выбран: {name}")
