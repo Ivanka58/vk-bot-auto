@@ -18,7 +18,7 @@ from urllib.parse import unquote
 
 load_dotenv()
 
-TG_TOKEN = os.getenv('TG_TOKEN')
+TG_TOKEN = os.getenv('TG_TOKEN', '').strip()
 raw_port = os.getenv('PORT')
 try:
     PORT = int(raw_port) if raw_port and raw_port.lower() not in ('null', '', 'none') else 80
@@ -39,8 +39,12 @@ user_data = {}
 def verify_telegram_init_data(init_data):
     try:
         if not init_data:
-            print("[VERIFY] init_data пустой")
+            print("[VERIFY] ❌ init_data пустой")
             return None
+        
+        print(f"[VERIFY] init_data length: {len(init_data)}")
+        print(f"[VERIFY] TG_TOKEN length: {len(TG_TOKEN)}")
+        print(f"[VERIFY] TG_TOKEN first 15: {TG_TOKEN[:15]}...")
         
         # Парсим query string корректно — только по первому '='
         parsed_data = {}
@@ -49,9 +53,11 @@ def verify_telegram_init_data(init_data):
                 key, value = pair.split('=', 1)
                 parsed_data[key] = value
         
+        print(f"[VERIFY] Keys found: {list(parsed_data.keys())}")
+        
         hash_value = parsed_data.pop('hash', None)
         if not hash_value:
-            print("[VERIFY] hash отсутствует")
+            print("[VERIFY] ❌ hash отсутствует")
             return None
         
         # Собираем data_check_string из отсортированных пар
@@ -60,27 +66,36 @@ def verify_telegram_init_data(init_data):
             for k in sorted(parsed_data.keys())
         )
         
+        print(f"[VERIFY] data_check_string preview: {data_check_string[:120]}...")
+        
         secret_key = hmac.new(b"WebAppData", TG_TOKEN.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
         
+        print(f"[VERIFY] calculated hash: {calculated_hash[:20]}...")
+        print(f"[VERIFY] received hash:   {hash_value[:20]}...")
+        
         if calculated_hash != hash_value:
-            print(f"[VERIFY] hash не совпадает")
-            print(f"  Ожидалось:  {calculated_hash}")
-            print(f"  Получено:   {hash_value}")
+            print(f"[VERIFY] ❌ hash НЕ СОВПАДАЕТ")
             return None
             
         auth_date = int(parsed_data.get('auth_date', 0))
+        print(f"[VERIFY] auth_date: {auth_date}, now: {int(time.time())}, diff: {int(time.time()) - auth_date}")
+        
         if time.time() - auth_date > 86400:
-            print("[VERIFY] auth_date просрочен")
+            print("[VERIFY] ❌ auth_date просрочен")
             return None
         
         # user приходит URL-encoded — декодируем
         user_raw = parsed_data.get('user', '{}')
         user_json = unquote(user_raw)
-        return json.loads(user_json)
+        user_obj = json.loads(user_json)
+        print(f"[VERIFY] ✅ User ID: {user_obj.get('id')}")
+        return user_obj
         
     except Exception as e:
         print(f"[VERIFY ERROR] {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ═══════════════════════════════════════
@@ -185,12 +200,10 @@ def api_send():
 
 @app.route('/')
 def serve_root():
-    """Главная страница — отдаём Mini App"""
     return send_from_directory('miniapp', 'index.html')
 
 @app.route('/<path:filename>')
 def serve_root_static(filename):
-    """Статика Mini App (css, js, картинки)"""
     if filename.startswith('api/'):
         return "Not found", 404
     return send_from_directory('miniapp', filename)
@@ -203,7 +216,7 @@ def reset_webhook():
     try:
         url = f"https://api.telegram.org/bot{TG_TOKEN}/setWebhook?url="
         r = requests.get(url, timeout=10)
-        print(f"[Webhook] Сброшен: {r.status_code}")
+        print(f"[Webhook] Сброшен: {r.status_code} | {r.text}")
     except Exception as e:
         print(f"[Webhook] Ошибка: {e}")
 
@@ -425,7 +438,11 @@ def fallback(message):
 def run_bot():
     reset_webhook()
     print("[Bot] Старт polling...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    bot.infinity_polling(
+        timeout=60, 
+        long_polling_timeout=60,
+        skip_pending=True
+    )
 
 if __name__ == '__main__':
     print(f"[Server] Flask на порту {PORT}")
