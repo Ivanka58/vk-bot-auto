@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VK Poster</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Страница 1: Приветствие -->
+        <div class="page active" id="page-welcome">
+            <div class="welcome-container">
+                <div class="logo-animation">
+                    <div class="logo-circle"></div>
+                    <div class="logo-icon">📢</div>
+                </div>
+                <h1>Привет, Захар!</h1>
+                <p class="subtitle">Готов отправить объявление?</p>
+                <button class="btn-primary" onclick="goToPage('account')">
+                    <span>Отправить объявление</span>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Страница 2: Аккаунт -->
+        <div class="page" id="page-account">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Выбор аккаунта</h2>
+            </div>
+            <div class="cards-container">
+                <div class="card" onclick="selectAccount('accessories')">
+                    <div class="card-icon">💎</div>
+                    <div class="card-title">Аксессуары</div>
+                    <div class="card-desc">Основной аккаунт</div>
+                    <div class="card-check">✓</div>
+                </div>
+                <div class="card" onclick="selectAccount('autosale')">
+                    <div class="card-icon">🚗</div>
+                    <div class="card-title">Дианы</div>
+                    <div class="card-desc">Второй аккаунт</div>
+                    <div class="card-check">✓</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Страница 3: Категория -->
+        <div class="page" id="page-category">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Категория групп</h2>
+            </div>
+            <div class="cards-container">
+                <div class="card" onclick="selectCategory('usual')">
+                    <div class="card-icon">📁</div>
+                    <div class="card-title">Обычные группы</div>
+                    <div class="card-check">✓</div>
+                </div>
+                <div class="card" onclick="selectCategory('large')">
+                    <div class="card-icon">⭐</div>
+                    <div class="card-title">Крупные группы</div>
+                    <div class="card-check">✓</div>
+                </div>
+                <div class="card" onclick="selectCategory('custom')">
+                    <div class="card-icon">🎯</div>
+                    <div class="card-title">Группы на выбор</div>
+                    <div class="card-desc">Выбери конкретные группы</div>
+                    <div class="card-check">✓</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Страница 4: Выбор групп -->
+        <div class="page" id="page-groups">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Выбор групп</h2>
+            </div>
+            <div class="groups-info">Нажми на группы, в которые хочешь отправить</div>
+            <div class="groups-list" id="groups-list"></div>
+            <button class="btn-primary btn-fixed" onclick="confirmGroups()" id="btn-confirm-groups" disabled>
+                Дальше <span id="selected-count">(0)</span>
+            </button>
+        </div>
+
+        <!-- Страница 5: Фото -->
+        <div class="page" id="page-photos">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Фотографии</h2>
+            </div>
+            <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                <div class="upload-icon">📷</div>
+                <div class="upload-text">Нажми чтобы выбрать фото</div>
+                <div class="upload-hint">Можно выбрать сколько угодно фото</div>
+            </div>
+            <input type="file" id="file-input" accept="image/*" multiple style="display:none" onchange="handleFiles(this.files)">
+            <div class="photos-grid" id="photos-grid"></div>
+            <button class="btn-primary btn-fixed" onclick="goToPage('text')" id="btn-photos-next" disabled>
+                Дальше
+            </button>
+        </div>
+
+        <!-- Страница 6: Текст -->
+        <div class="page" id="page-text">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Текст объявления</h2>
+            </div>
+            <textarea class="text-input" id="ad-text" placeholder="Введите текст объявления..." rows="6"></textarea>
+            <button class="btn-primary btn-fixed" onclick="saveText()">
+                Дальше
+            </button>
+        </div>
+
+        <!-- Страница 7: Предпросмотр -->
+        <div class="page" id="page-preview">
+            <div class="page-header">
+                <button class="btn-back" onclick="goBack()">←</button>
+                <h2>Предпросмотр</h2>
+            </div>
+            <div class="preview-container">
+                <div class="preview-photos" id="preview-photos"></div>
+                <div class="preview-text" id="preview-text"></div>
+                <div class="preview-meta">
+                    <div class="meta-item">
+                        <span class="meta-label">Аккаунт:</span>
+                        <span class="meta-value" id="preview-account"></span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Категория:</span>
+                        <span class="meta-value" id="preview-category"></span>
+                    </div>
+                    <div class="meta-item" id="preview-groups-item" style="display:none">
+                        <span class="meta-label">Группы:</span>
+                        <span class="meta-value" id="preview-groups"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="edit-buttons">
+                <button class="btn-edit" onclick="editAccount()">Сменить аккаунт</button>
+                <button class="btn-edit" onclick="editCategory()">Сменить категорию</button>
+                <button class="btn-edit" onclick="editPhotos()">Поменять фото</button>
+                <button class="btn-edit" onclick="editText()">Поменять текст</button>
+            </div>
+            <button class="btn-primary btn-publish" onclick="publish()">
+                <span>🚀 Опубликовать</span>
+            </button>
+        </div>
+
+        <!-- Страница 8: Отправка -->
+        <div class="page" id="page-sending">
+            <div class="sending-container">
+                <div class="sending-animation">
+                    <div class="rocket">🚀</div>
+                </div>
+                <h2>Отправка...</h2>
+                <div class="groups-status" id="groups-status"></div>
+            </div>
+        </div>
+
+        <!-- Страница 9: Результат -->
+        <div class="page" id="page-result">
+            <div class="result-container">
+                <div class="success-animation">
+                    <div class="checkmark">✅</div>
+                </div>
+                <h2>Отправка завершена!</h2>
+                <div class="result-report" id="result-report"></div>
+                <a href="https://t.me/Ivanka58" class="btn-telegram" target="_blank">
+                    Принимаю благодарности в лс 👉👈 @Ivanka58
+                </a>
+                <button class="btn-primary" onclick="resetApp()">Новое объявление</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
