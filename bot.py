@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import time
 import json
+from urllib.parse import unquote
 
 load_dotenv()
 
@@ -37,21 +38,47 @@ user_data = {}
 # ═══════════════════════════════════════
 def verify_telegram_init_data(init_data):
     try:
-        parsed_data = dict(x.split('=') for x in init_data.split('&'))
-        hash_value = parsed_data.pop('hash', None)
+        if not init_data:
+            print("[VERIFY] init_data пустой")
+            return None
         
-        data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+        # Парсим query string корректно — только по первому '='
+        parsed_data = {}
+        for pair in init_data.split('&'):
+            if '=' in pair:
+                key, value = pair.split('=', 1)
+                parsed_data[key] = value
+        
+        hash_value = parsed_data.pop('hash', None)
+        if not hash_value:
+            print("[VERIFY] hash отсутствует")
+            return None
+        
+        # Собираем data_check_string из отсортированных пар
+        data_check_string = '\n'.join(
+            f"{k}={parsed_data[k]}" 
+            for k in sorted(parsed_data.keys())
+        )
+        
         secret_key = hmac.new(b"WebAppData", TG_TOKEN.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
         
         if calculated_hash != hash_value:
+            print(f"[VERIFY] hash не совпадает")
+            print(f"  Ожидалось:  {calculated_hash}")
+            print(f"  Получено:   {hash_value}")
             return None
             
         auth_date = int(parsed_data.get('auth_date', 0))
         if time.time() - auth_date > 86400:
+            print("[VERIFY] auth_date просрочен")
             return None
-            
-        return json.loads(parsed_data.get('user', '{}'))
+        
+        # user приходит URL-encoded — декодируем
+        user_raw = parsed_data.get('user', '{}')
+        user_json = unquote(user_raw)
+        return json.loads(user_json)
+        
     except Exception as e:
         print(f"[VERIFY ERROR] {e}")
         return None
