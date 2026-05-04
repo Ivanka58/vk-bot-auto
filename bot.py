@@ -61,7 +61,7 @@ def account_inline_kb():
     kb = InlineKeyboardMarkup()
     kb.add(
         InlineKeyboardButton("Аксессуары", callback_data='acc_accessories'),
-        InlineKeyboardButton("Автопродажа", callback_data='acc_autosale')
+        InlineKeyboardButton("Дашин", callback_data='acc_autosale')
     )
     return kb
 
