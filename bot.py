@@ -61,7 +61,7 @@ def account_inline_kb():
     kb = InlineKeyboardMarkup()
     kb.add(
         InlineKeyboardButton("Аксессуары", callback_data='acc_accessories'),
-        InlineKeyboardButton("Дашин", callback_data='acc_autosale')
+        InlineKeyboardButton("Дианы", callback_data='acc_autosale')
     )
     return kb
 
@@ -96,7 +96,7 @@ def choose_account(call):
     user_data[chat_id]['account'] = account
     user_data[chat_id]['state'] = 'category'
 
-    name = "Аксессуары" if account == 'accessories' else "Дашин"
+    name = "Аксессуары" if account == 'accessories' else "Дианы"
     print(f"[ACCOUNT] Пользователь {chat_id} выбрал: {name}")
 
     bot.answer_callback_query(call.id, f"Выбран: {name}")
@@ -174,7 +174,7 @@ def handle_text(message):
         f"📋 Предпросмотр:\n\n"
         f"{message.text}\n\n"
         f"📷 Фото: {len(user_data[chat_id]['photos'])}\n"
-        f"👤 Аккаунт: {'Аксессуары' if user_data[chat_id]['account'] == 'accessories' else 'Автопродажа'}"
+        f"👤 Аккаунт: {'Аксессуары' if user_data[chat_id]['account'] == 'accessories' else 'Дианы'}"
     )
     bot.send_message(chat_id, preview, reply_markup=confirm_kb())
 
@@ -186,7 +186,7 @@ def confirm_send(message):
 
     data = user_data[chat_id]
     account = data.get('account', 'accessories')
-    acc_name = 'Аксессуары' if account == 'accessories' else 'Автопродажа'
+    acc_name = 'Аксессуары' if account == 'accessories' else 'Дианы'
 
     print(f"[CONFIRM] Отправка: {len(data['photos'])} фото, аккаунт: {acc_name}")
 
