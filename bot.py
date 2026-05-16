@@ -1,7 +1,7 @@
 import os
 import telebot
 from telebot.types import (
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
+    ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton
 )
 import requests
@@ -14,20 +14,16 @@ load_dotenv()
 
 TG_TOKEN = os.getenv('TG_TOKEN')
 
-# --- ПОРТ ДЛЯ AMVERA ---
 raw_port = os.getenv('PORT')
 try:
     PORT = int(raw_port) if raw_port and raw_port.lower() not in ('null', '', 'none') else 80
 except ValueError:
     PORT = 80
-# -------------------------
 
 bot = telebot.TeleBot(TG_TOKEN)
 app = Flask(__name__)
 
 user_data = {}
-
-# ─── Вспомогательные функции ───
 
 def reset_webhook():
     try:
@@ -64,8 +60,6 @@ def account_inline_kb():
         InlineKeyboardButton("Дианы", callback_data='acc_autosale')
     )
     return kb
-
-# ─── Обработчики ───
 
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
@@ -162,6 +156,7 @@ def finish_photos(message):
 
     user_data[chat_id]['state'] = 'text'
     print(f"[FINISH] Файлы: {user_data[chat_id]['photos']}")
+    from telebot.types import ReplyKeyboardRemove
     bot.send_message(chat_id, "✏️ Теперь отправь текст объявления:", reply_markup=ReplyKeyboardRemove())
 
 @bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'text')
@@ -170,11 +165,14 @@ def handle_text(message):
     user_data[chat_id]['text'] = message.text
     user_data[chat_id]['state'] = 'confirm'
 
+    account = user_data[chat_id].get('account', 'accessories')
+    acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
+
     preview = (
         f"📋 Предпросмотр:\n\n"
         f"{message.text}\n\n"
         f"📷 Фото: {len(user_data[chat_id]['photos'])}\n"
-        f"👤 Аккаунт: {'Аксессуары' if user_data[chat_id]['account'] == 'accessories' else 'Дианы'}"
+        f"👤 Аккаунт: {acc_name}"
     )
     bot.send_message(chat_id, preview, reply_markup=confirm_kb())
 
@@ -186,7 +184,7 @@ def confirm_send(message):
 
     data = user_data[chat_id]
     account = data.get('account', 'accessories')
-    acc_name = 'Аксессуары' if account == 'accessories' else 'Дианы'
+    acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
 
     print(f"[CONFIRM] Отправка: {len(data['photos'])} фото, аккаунт: {acc_name}")
 
@@ -204,7 +202,23 @@ def confirm_send(message):
             data['category'],
             account=account
         )
+        
+        # Отправляем основной отчёт
         bot.send_message(chat_id, f"📋 Отправка завершена!\n\n{report}", reply_markup=main_kb())
+        
+        # Отправляем дополнительное сообщение с деталями
+        category_name = "Обычные" if data['category'] == 'usual' else "Крупные"
+        
+        info_msg = (
+            f"📊 Детали отправки:\n\n"
+            f"👤 Аккаунт: <b>{acc_name}</b>\n"
+            f"📁 Категория групп: <b>{category_name}</b>\n"
+            f"📷 Фото: <b>{len(data['photos'])}</b>\n"
+            f"✅ Успешно: <b>{report.count('✅')}</b>\n"
+            f"❌ Ошибок: <b>{report.count('❌')}</b>"
+        )
+        bot.send_message(chat_id, info_msg, parse_mode='HTML', reply_markup=main_kb())
+        
     except Exception as e:
         err_msg = str(e)
         print(f"[FATAL] {err_msg}")
@@ -242,14 +256,7 @@ def reset_ad(message):
 
 @bot.message_handler(func=lambda m: True)
 def fallback(message):
-    chat_id = message.chat.id
-    state = user_data.get(chat_id, {}).get('state', 'unknown')
-    print(f"[FALLBACK] Пользователь {chat_id}, состояние '{state}', текст: {message.text}")
-    bot.send_message(
-        chat_id,
-        "❓ Нажми /start если что-то пошло не так.",
-        reply_markup=main_kb()
-    )
+    bot.send_message(message.chat.id, "❓ Нажми /start если что-то пошло не так.", reply_markup=main_kb())
 
 @app.route('/')
 def index():
