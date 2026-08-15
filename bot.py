@@ -11,7 +11,7 @@ from flask import Flask
 from vk_worker import send_to_vk_groups
 from dotenv import load_dotenv
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from db_worker import (
     init_db, save_scheduled_ad, get_scheduled_ads, get_scheduled_ad_by_id,
     delete_scheduled_ad, update_scheduled_ad, check_time_conflict
@@ -207,6 +207,10 @@ def send_photos_as_album(chat_id, photo_paths, caption=None):
     if media:
         bot.send_media_group(chat_id, media)
 
+def get_moscow_now():
+    """Возвращает текущее время в Москве"""
+    return datetime.now(timezone.utc) + timedelta(hours=3)
+
 # ============ ОБЩИЕ ОБРАБОТЧИКИ ============
 
 @bot.message_handler(commands=['start'])
@@ -351,7 +355,6 @@ def handle_photo(message):
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded = bot.download_file(file_info.file_path)
 
-    # Сохраняем в постоянное хранилище /data
     filename = f"photo_{chat_id}_{int(datetime.now().timestamp())}_{len(photos)}.jpg"
     path = save_photo_persistent(chat_id, downloaded, filename)
 
@@ -643,7 +646,6 @@ def reset_ad(message):
 
     mode = data.get('mode', 'instant')
 
-    # Удаляем временные фото только для instant режима
     if mode == 'instant':
         for p in data.get('photos', []):
             try:
@@ -786,7 +788,6 @@ def delete_ad(message):
     if ad_id:
         ad = get_scheduled_ad_by_id(ad_id)
         if ad:
-            # Удаляем фото с диска
             for p in ad.get('photos', []):
                 try:
                     if os.path.exists(p):
@@ -893,7 +894,6 @@ def run_scheduler():
             print(f"[SCHEDULER LOOP ERROR] {e}")
         time.sleep(30)
 
-# Храним последнее проверенное время, чтобы не отправлять дважды
 _last_checked_minute = None
 
 def check_and_send_scheduled():
@@ -901,10 +901,10 @@ def check_and_send_scheduled():
     global _last_checked_minute
     from db_worker import get_due_ads, mark_ad_sent
 
-    now = datetime.now()
+    # Используем московское время (UTC+3)
+    now = get_moscow_now()
     current_minute = now.strftime('%H:%M')
 
-    # Проверяем только если минута изменилась
     if _last_checked_minute == current_minute:
         return
     _last_checked_minute = current_minute
@@ -912,7 +912,7 @@ def check_and_send_scheduled():
     weekday_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
     current_day_code = weekday_map.get(now.weekday(), '')
 
-    print(f"[SCHEDULER CHECK] {now} | day={current_day_code} | time={current_minute}")
+    print(f"[SCHEDULER CHECK] Moscow: {now} | day={current_day_code} | time={current_minute}")
 
     if not current_day_code:
         return
@@ -929,7 +929,6 @@ def check_and_send_scheduled():
             account = ad.get('account', 'accessories')
             acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
 
-            # Проверяем что фото существуют
             valid_photos = [p for p in ad['photos'] if os.path.exists(p)]
             if len(valid_photos) != len(ad['photos']):
                 missing = len(ad['photos']) - len(valid_photos)
@@ -992,7 +991,9 @@ def run_bot():
 if __name__ == '__main__':
     print(f"[Server] Flask на порту {PORT}")
     print(f"[Storage] Фото хранятся в: {PHOTO_STORAGE}")
-    print(f"[Time] Текущее время сервера: {datetime.now()}")
+    moscow_now = get_moscow_now()
+    print(f"[Time] Текущее московское время: {moscow_now}")
+    print(f"[Time] UTC сейчас: {datetime.now(timezone.utc)}")
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
