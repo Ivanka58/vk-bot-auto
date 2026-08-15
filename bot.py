@@ -10,7 +10,6 @@ import threading
 from flask import Flask
 from vk_worker import send_to_vk_groups
 from dotenv import load_dotenv
-import schedule
 import time
 from datetime import datetime
 from db_worker import (
@@ -33,6 +32,10 @@ app = Flask(__name__)
 
 user_data = {}
 
+# Папка для постоянного хранения фото (Amvera persistenceMount: /data)
+PHOTO_STORAGE = "/data/scheduled_photos"
+os.makedirs(PHOTO_STORAGE, exist_ok=True)
+
 # Инициализация БД
 init_db()
 
@@ -48,7 +51,8 @@ def reset_webhook():
 
 def main_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add(KeyboardButton("📤 Отправить объявление"), KeyboardButton("📅 Запланировать отправку"))
+    kb.add(KeyboardButton("📤 Отправить объявление"))
+    kb.add(KeyboardButton("📅 Запланировать отправку"), KeyboardButton("📋 Запланированные"))
     return kb
 
 def back_kb():
@@ -110,6 +114,7 @@ def scheduled_detail_kb():
     kb.add(KeyboardButton("📁 Изменить группы"))
     kb.add(KeyboardButton("📅 Изменить дни публикации"))
     kb.add(KeyboardButton("⏰ Изменить время публикации"))
+    kb.add(KeyboardButton("🗑 Удалить объявление"))
     kb.add(KeyboardButton("◀️ Назад"))
     return kb
 
@@ -120,7 +125,6 @@ def scheduled_list_kb(ads):
         days_str = ', '.join([day_names.get(d, d) for d in ad['days']])
         label = f"{days_str} — {ad['time']}"
         kb.add(InlineKeyboardButton(label, callback_data=f'sched_{ad["id"]}'))
-    kb.add(InlineKeyboardButton("➕ Добавить ещё", callback_data='sched_add'))
     return kb
 
 def format_days(days):
@@ -173,6 +177,15 @@ def init_user_data(chat_id, mode='instant'):
         'temp_days': []
     }
 
+def save_photo_persistent(chat_id, file_data, filename):
+    """Сохраняет фото в постоянное хранилище /data"""
+    user_dir = os.path.join(PHOTO_STORAGE, str(chat_id))
+    os.makedirs(user_dir, exist_ok=True)
+    path = os.path.join(user_dir, filename)
+    with open(path, 'wb') as f:
+        f.write(file_data)
+    return path
+
 def send_photos_as_album(chat_id, photo_paths, caption=None):
     """Отправляет фото альбомом (одним сообщением)"""
     if not photo_paths:
@@ -182,7 +195,6 @@ def send_photos_as_album(chat_id, photo_paths, caption=None):
     if not valid_photos:
         return
 
-    # Telegram позволяет до 10 фото в альбоме
     media = []
     for i, path in enumerate(valid_photos[:10]):
         with open(path, 'rb') as f:
@@ -201,24 +213,7 @@ def send_photos_as_album(chat_id, photo_paths, caption=None):
 def cmd_start(message):
     chat_id = message.chat.id
     user_data[chat_id] = {'state': 'main'}
-
-    ads = get_scheduled_ads(chat_id)
-    if ads:
-        msg = "👋 Привет! У вас есть запланированные объявления."
-        bot.send_message(chat_id, msg, reply_markup=main_kb())
-        show_scheduled_list(chat_id)
-    else:
-        bot.send_message(chat_id, "👋 Привет! Выберите действие:", reply_markup=main_kb())
-
-def show_scheduled_list(chat_id):
-    ads = get_scheduled_ads(chat_id)
-    if not ads:
-        bot.send_message(chat_id, "📭 У вас пока нет запланированных объявлений.", reply_markup=main_kb())
-        return
-
-    msg = "📅 Ваши запланированные объявления:"
-    kb = scheduled_list_kb(ads)
-    bot.send_message(chat_id, msg, reply_markup=kb)
+    bot.send_message(chat_id, "👋 Привет! Выберите действие:", reply_markup=main_kb())
 
 # ============ ОБЫЧНАЯ ОТПРАВКА ============
 
@@ -232,26 +227,36 @@ def send_ad(message):
         reply_markup=account_inline_kb()
     )
 
-# ============ ЗАПЛАНИРОВАННАЯ ОТПРАВКА ============
+# ============ ЗАПЛАНИРОВАННАЯ ОТПРАВКА (сразу создание) ============
 
 @bot.message_handler(func=lambda m: m.text == "📅 Запланировать отправку")
 def schedule_ad_start(message):
     chat_id = message.chat.id
+    init_user_data(chat_id, mode='schedule')
+    bot.send_message(
+        chat_id,
+        "📅 Запланировать отправку\n\nЧерез какой аккаунт отправляем?",
+        reply_markup=account_inline_kb()
+    )
 
-    # Сначала показываем список запланированных (если есть)
+# ============ СПИСОК ЗАПЛАНИРОВАННЫХ ============
+
+@bot.message_handler(func=lambda m: m.text == "📋 Запланированные")
+def show_scheduled(message):
+    chat_id = message.chat.id
+    set_user_state(chat_id, 'scheduled_list')
+    show_scheduled_list(chat_id)
+
+def show_scheduled_list(chat_id):
     ads = get_scheduled_ads(chat_id)
-    if ads:
-        msg = "📅 Ваши запланированные объявления:"
-        kb = scheduled_list_kb(ads)
-        bot.send_message(chat_id, msg, reply_markup=kb)
-    else:
-        # Если нет — сразу начинаем создание
-        init_user_data(chat_id, mode='schedule')
-        bot.send_message(
-            chat_id,
-            "📅 Создание запланированного объявления\n\nЧерез какой аккаунт отправляем?",
-            reply_markup=account_inline_kb()
-        )
+    if not ads:
+        bot.send_message(chat_id, "📭 У вас пока нет запланированных объявлений.", reply_markup=main_kb())
+        set_user_state(chat_id, 'main')
+        return
+
+    msg = "📅 Ваши запланированные объявления:"
+    kb = scheduled_list_kb(ads)
+    bot.send_message(chat_id, msg, reply_markup=kb)
 
 # ============ ВЫБОР АККАУНТА ============
 
@@ -346,11 +351,9 @@ def handle_photo(message):
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded = bot.download_file(file_info.file_path)
 
-    tmp = f"temp/{chat_id}"
-    os.makedirs(tmp, exist_ok=True)
-    path = os.path.join(tmp, f"photo_{len(photos)}.jpg")
-    with open(path, 'wb') as f:
-        f.write(downloaded)
+    # Сохраняем в постоянное хранилище /data
+    filename = f"photo_{chat_id}_{int(datetime.now().timestamp())}_{len(photos)}.jpg"
+    path = save_photo_persistent(chat_id, downloaded, filename)
 
     photos.append(path)
     print(f"[PHOTO] Сохранено: {path} | Размер: {os.path.getsize(path)} байт")
@@ -533,7 +536,6 @@ def handle_time(message):
     category_name = "Обычные" if data['category'] == 'usual' else "Крупные"
     days_str = format_days(data['days'])
 
-    # Отправляем фото альбомом + текст + сводку
     caption = (
         f"{data['text']}\n\n"
         f"📋 Публикация объявления\n"
@@ -546,7 +548,6 @@ def handle_time(message):
 
     send_photos_as_album(chat_id, data['photos'], caption=caption)
 
-    # Если фото не было — отправляем текстом
     if not data['photos']:
         bot.send_message(chat_id, caption, parse_mode='HTML', reply_markup=confirm_kb())
     else:
@@ -586,12 +587,6 @@ def confirm_send(message):
             reply_markup=main_kb()
         )
 
-        for p in data.get('photos', []):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except:
-                pass
         user_data[chat_id] = {'state': 'main'}
         return
 
@@ -635,12 +630,6 @@ def confirm_send(message):
         print(f"[FATAL] {err_msg}")
         bot.send_message(chat_id, f"🔥 Ошибка:\n\n{err_msg}", reply_markup=main_kb())
     finally:
-        for p in data.get('photos', []):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except:
-                pass
         user_data[chat_id] = {'state': 'main'}
 
 @bot.message_handler(func=lambda m: m.text == "🔄 Изменить")
@@ -654,12 +643,14 @@ def reset_ad(message):
 
     mode = data.get('mode', 'instant')
 
-    for p in data.get('photos', []):
-        try:
-            if os.path.exists(p):
-                os.remove(p)
-        except:
-            pass
+    # Удаляем временные фото только для instant режима
+    if mode == 'instant':
+        for p in data.get('photos', []):
+            try:
+                if os.path.exists(p) and 'scheduled_photos' not in p:
+                    os.remove(p)
+            except:
+                pass
 
     init_user_data(chat_id, mode=mode)
     print(f"[RESET] Пользователь {chat_id} сбросил объявление")
@@ -669,7 +660,7 @@ def reset_ad(message):
         reply_markup=account_inline_kb()
     )
 
-# ============ СПИСОК ЗАПЛАНИРОВАННЫХ ============
+# ============ ПРОСМОТР ЗАПЛАНИРОВАННОГО ============
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('sched_'))
 def show_scheduled_detail(call):
@@ -691,7 +682,6 @@ def show_scheduled_detail(call):
     category_name = "Обычные" if ad['category'] == 'usual' else "Крупные"
     days_str = format_days(ad['days'])
 
-    # Отправляем фото альбомом
     photos = ad.get('photos', [])
     if photos:
         caption = (
@@ -704,7 +694,6 @@ def show_scheduled_detail(call):
         )
         send_photos_as_album(chat_id, photos, caption=caption)
     else:
-        # Если нет фото — текстом
         detail_msg = (
             f"{ad['text']}\n\n"
             f"📊 Детали:\n"
@@ -716,17 +705,6 @@ def show_scheduled_detail(call):
         bot.send_message(chat_id, detail_msg, parse_mode='HTML')
 
     bot.send_message(chat_id, "Выберите действие:", reply_markup=scheduled_detail_kb())
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'sched_add')
-def add_more_scheduled(call):
-    chat_id = call.message.chat.id
-    init_user_data(chat_id, mode='schedule')
-    bot.send_message(
-        chat_id,
-        "📅 Создание нового запланированного объявления\n\nЧерез какой аккаунт отправляем?",
-        reply_markup=account_inline_kb()
-    )
     bot.answer_callback_query(call.id)
 
 # ============ ИЗМЕНЕНИЕ ЗАПЛАНИРОВАННОГО ============
@@ -800,6 +778,27 @@ def edit_time(message):
         reply_markup=back_kb()
     )
 
+@bot.message_handler(func=lambda m: m.text == "🗑 Удалить объявление" and get_user_state(m.chat.id) == 'scheduled_detail')
+def delete_ad(message):
+    chat_id = message.chat.id
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
+
+    if ad_id:
+        ad = get_scheduled_ad_by_id(ad_id)
+        if ad:
+            # Удаляем фото с диска
+            for p in ad.get('photos', []):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except:
+                    pass
+        delete_scheduled_ad(ad_id)
+
+    bot.send_message(chat_id, "🗑 Объявление удалено", reply_markup=main_kb())
+    set_user_state(chat_id, 'main')
+    show_scheduled_list(chat_id)
+
 @bot.message_handler(func=lambda m: get_user_state(m.chat.id) == 'edit_time')
 def save_edited_time(message):
     chat_id = message.chat.id
@@ -870,9 +869,9 @@ def go_back(message):
             reply_markup=account_inline_kb()
         )
 
-    elif state in ['scheduled_detail', 'edit_account', 'edit_groups', 'edit_days', 'edit_time']:
+    elif state in ['scheduled_detail', 'edit_account', 'edit_groups', 'edit_days', 'edit_time', 'scheduled_list']:
         set_user_state(chat_id, 'main')
-        show_scheduled_list(chat_id)
+        bot.send_message(chat_id, "👋 Главное меню", reply_markup=main_kb())
 
     elif state in ['confirm', 'schedule_confirm']:
         user_data[chat_id]['state'] = 'text'
@@ -885,46 +884,60 @@ def go_back(message):
 # ============ ПЛАНИРОВЩИК ============
 
 def run_scheduler():
-    """Фоновый поток для проверки расписания"""
+    """Фоновый поток для проверки расписания — каждые 30 секунд"""
+    print("[SCHEDULER] Поток планировщика запущен")
     while True:
         try:
-            schedule.run_pending()
+            check_and_send_scheduled()
         except Exception as e:
             print(f"[SCHEDULER LOOP ERROR] {e}")
         time.sleep(30)
 
+# Храним последнее проверенное время, чтобы не отправлять дважды
+_last_checked_minute = None
+
 def check_and_send_scheduled():
     """Проверяет и отправляет запланированные объявления"""
+    global _last_checked_minute
     from db_worker import get_due_ads, mark_ad_sent
 
     now = datetime.now()
+    current_minute = now.strftime('%H:%M')
 
-    # Python datetime weekday(): Monday=0, Sunday=6
-    # Наши коды: mon, tue, wed, thu, fri, sat, sun
+    # Проверяем только если минута изменилась
+    if _last_checked_minute == current_minute:
+        return
+    _last_checked_minute = current_minute
+
     weekday_map = {0: 'mon', 1: 'tue', 2: 'wed', 3: 'thu', 4: 'fri', 5: 'sat', 6: 'sun'}
     current_day_code = weekday_map.get(now.weekday(), '')
-    current_time = now.strftime('%H:%M')
 
-    print(f"[SCHEDULER CHECK] {now} | day={current_day_code} | time={current_time}")
+    print(f"[SCHEDULER CHECK] {now} | day={current_day_code} | time={current_minute}")
 
     if not current_day_code:
         return
 
-    due_ads = get_due_ads(current_day_code, current_time)
+    due_ads = get_due_ads(current_day_code, current_minute)
     print(f"[SCHEDULER] Найдено {len(due_ads)} объявлений для отправки")
 
     for ad in due_ads:
         chat_id = ad['chat_id']
         try:
-            print(f"[SCHEDULER] Отправка объявления {ad['id']} для chat_id={chat_id}")
+            print(f"[SCHEDULER] Отправка объявления id={ad['id']} для chat_id={chat_id}")
             status_msg = bot.send_message(chat_id, "⏳ Начинаю отправку объявления...")
 
             account = ad.get('account', 'accessories')
             acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
 
+            # Проверяем что фото существуют
+            valid_photos = [p for p in ad['photos'] if os.path.exists(p)]
+            if len(valid_photos) != len(ad['photos']):
+                missing = len(ad['photos']) - len(valid_photos)
+                print(f"[SCHEDULER WARNING] {missing} фото не найдено!")
+
             report = send_to_vk_groups(
                 ad['text'],
-                ad['photos'],
+                valid_photos,
                 ad['category'],
                 account=account
             )
@@ -945,7 +958,7 @@ def check_and_send_scheduled():
                 f"📊 Детали отправки:\n\n"
                 f"👤 Аккаунт: <b>{acc_name}</b>\n"
                 f"📁 Категория групп: <b>{category_name}</b>\n"
-                f"📷 Фото: <b>{len(ad['photos'])}</b>\n"
+                f"📷 Фото: <b>{len(valid_photos)}</b>\n"
                 f"✅ Успешно: <b>{report.count('✅')}</b>\n"
                 f"❌ Ошибок: <b>{report.count('❌')}</b>"
             )
@@ -960,8 +973,6 @@ def check_and_send_scheduled():
                 bot.send_message(chat_id, f"🔥 Ошибка при отправке запланированного объявления:\n\n{str(e)}", reply_markup=main_kb())
             except:
                 pass
-
-schedule.every(1).minutes.do(check_and_send_scheduled)
 
 # ============ FALLBACK ============
 
@@ -980,6 +991,8 @@ def run_bot():
 
 if __name__ == '__main__':
     print(f"[Server] Flask на порту {PORT}")
+    print(f"[Storage] Фото хранятся в: {PHOTO_STORAGE}")
+    print(f"[Time] Текущее время сервера: {datetime.now()}")
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
