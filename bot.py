@@ -58,6 +58,7 @@ def back_kb():
 def category_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("📁 Обычные группы"), KeyboardButton("⭐ Крупные группы"))
+    kb.add(KeyboardButton("◀️ Назад"))
     return kb
 
 def photo_kb():
@@ -80,29 +81,28 @@ def account_inline_kb():
     )
     return kb
 
-def days_inline_kb(selected_days=None, finish_only=False):
+def days_inline_kb(selected_days=None):
     if selected_days is None:
         selected_days = []
     kb = InlineKeyboardMarkup()
-    days = [('Пн', 'mon'), ('Вт', 'tue'), ('Ср', 'wed'), ('Чт', 'thu'), ('Пт', 'fri'), ('Сб', 'sat'), ('Вс', 'sun')]
-
-    if finish_only:
-        kb.add(InlineKeyboardButton("✅ Закончить", callback_data='days_finish'))
-        return kb
+    days = [
+        ('Пн', 'mon'), ('Вт', 'tue'), ('Ср', 'wed'), ('Чт', 'thu'),
+        ('Пт', 'fri'), ('Сб', 'sat'), ('Вс', 'sun')
+    ]
 
     row = []
     for name, code in days:
-        if code not in selected_days:
-            row.append(InlineKeyboardButton(name, callback_data=f'day_{code}'))
-        else:
+        if code in selected_days:
             row.append(InlineKeyboardButton(f"✅ {name}", callback_data=f'day_{code}'))
+        else:
+            row.append(InlineKeyboardButton(name, callback_data=f'day_{code}'))
     kb.row(*row)
 
     if selected_days:
         kb.add(InlineKeyboardButton("✅ Закончить выбор", callback_data='days_finish'))
     return kb
 
-def scheduled_detail_kb(ad_id):
+def scheduled_detail_kb():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add(KeyboardButton("📝 Изменить объявление"))
     kb.add(KeyboardButton("👤 Изменить аккаунт"))
@@ -123,7 +123,10 @@ def scheduled_list_kb(ads):
     return kb
 
 def format_days(days):
-    day_names = {'mon': 'понедельник', 'tue': 'вторник', 'wed': 'среда', 'thu': 'четверг', 'fri': 'пятница', 'sat': 'суббота', 'sun': 'воскресенье'}
+    day_names = {
+        'mon': 'понедельник', 'tue': 'вторник', 'wed': 'среда', 'thu': 'четверг',
+        'fri': 'пятница', 'sat': 'суббота', 'sun': 'воскресенье'
+    }
     order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
     result = []
     for d in order:
@@ -132,13 +135,42 @@ def format_days(days):
     return ', '.join(result)
 
 def format_days_short(days):
-    day_names = {'mon': 'пн', 'tue': 'вт', 'wed': 'ср', 'thu': 'чт', 'fri': 'пт', 'sat': 'сб', 'sun': 'вс'}
+    day_names = {
+        'mon': 'пн', 'tue': 'вт', 'wed': 'ср', 'thu': 'чт',
+        'fri': 'пт', 'sat': 'сб', 'sun': 'вс'
+    }
     order = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
     result = []
     for d in order:
         if d in days:
             result.append(day_names[d])
     return ', '.join(result)
+
+def get_user_state(chat_id):
+    return user_data.get(chat_id, {}).get('state', 'main')
+
+def set_user_state(chat_id, state):
+    if chat_id not in user_data:
+        user_data[chat_id] = {}
+    user_data[chat_id]['state'] = state
+
+def get_user_data(chat_id):
+    return user_data.get(chat_id, {})
+
+def init_user_data(chat_id, mode='instant'):
+    user_data[chat_id] = {
+        'state': 'account',
+        'photos': [],
+        'text': '',
+        'category': None,
+        'account': None,
+        'mode': mode,
+        'days': [],
+        'time': None,
+        'viewing_ad_id': None,
+        'editing_ad_id': None,
+        'temp_days': []
+    }
 
 # ============ ОБЩИЕ ОБРАБОТЧИКИ ============
 
@@ -147,14 +179,13 @@ def cmd_start(message):
     chat_id = message.chat.id
     user_data[chat_id] = {'state': 'main'}
 
-    # Проверяем есть ли запланированные объявления
     ads = get_scheduled_ads(chat_id)
     if ads:
-        msg = "👋 Привет! У вас есть запланированные объявления. Выберите действие:"
+        msg = "👋 Привет! У вас есть запланированные объявления."
         bot.send_message(chat_id, msg, reply_markup=main_kb())
         show_scheduled_list(chat_id)
     else:
-        bot.send_message(chat_id, "👋 Привет! Нажми кнопку ниже.", reply_markup=main_kb())
+        bot.send_message(chat_id, "👋 Привет! Выберите действие:", reply_markup=main_kb())
 
 def show_scheduled_list(chat_id):
     ads = get_scheduled_ads(chat_id)
@@ -166,35 +197,77 @@ def show_scheduled_list(chat_id):
     kb = scheduled_list_kb(ads)
     bot.send_message(chat_id, msg, reply_markup=kb)
 
-# ============ ОБЫЧНАЯ ОТПРАВКА (как было) ============
+# ============ ОБЫЧНАЯ ОТПРАВКА ============
 
 @bot.message_handler(func=lambda m: m.text == "📤 Отправить объявление")
 def send_ad(message):
     chat_id = message.chat.id
-    user_data[chat_id] = {
-        'state': 'account',
-        'photos': [], 'text': '', 'category': None, 'account': None,
-        'mode': 'instant'
-    }
+    init_user_data(chat_id, mode='instant')
     bot.send_message(
         chat_id,
-        "Через какой аккаунт отправляем?",
+        "📤 Отправить объявление\n\nЧерез какой аккаунт отправляем?",
         reply_markup=account_inline_kb()
     )
+
+# ============ ЗАПЛАНИРОВАННАЯ ОТПРАВКА ============
+
+@bot.message_handler(func=lambda m: m.text == "📅 Запланировать отправку")
+def schedule_ad_start(message):
+    chat_id = message.chat.id
+
+    # Сначала показываем список запланированных
+    ads = get_scheduled_ads(chat_id)
+    if ads:
+        msg = "📅 Ваши запланированные объявления:"
+        kb = scheduled_list_kb(ads)
+        bot.send_message(chat_id, msg, reply_markup=kb)
+
+    # Потом начинаем создание нового
+    init_user_data(chat_id, mode='schedule')
+    bot.send_message(
+        chat_id,
+        "📅 Создание нового запланированного объявления\n\nЧерез какой аккаунт отправляем?",
+        reply_markup=account_inline_kb()
+    )
+
+# ============ ВЫБОР АККАУНТА ============
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('acc_'))
 def choose_account(call):
     chat_id = call.message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'account':
+    state = get_user_state(chat_id)
+
+    # Работаем только если пользователь в режиме выбора аккаунта
+    if state not in ['account', 'edit_account']:
+        bot.answer_callback_query(call.id, "❌ Это действие больше не актуально")
         return
 
     account = 'accessories' if call.data == 'acc_accessories' else 'autosale'
+    name = "Аксессуары" if account == 'accessories' else "Дианы"
+
+    data = get_user_data(chat_id)
+
+    if state == 'edit_account':
+        # Режим редактирования существующего объявления
+        ad_id = data.get('editing_ad_id')
+        if ad_id:
+            update_scheduled_ad(ad_id, {'account': account})
+            bot.edit_message_text(
+                f"✅ Аккаунт изменён на: <b>{name}</b>",
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                parse_mode='HTML'
+            )
+            bot.answer_callback_query(call.id, f"Выбран: {name}")
+            set_user_state(chat_id, 'main')
+            show_scheduled_list(chat_id)
+        return
+
+    # Обычный flow
     user_data[chat_id]['account'] = account
     user_data[chat_id]['state'] = 'category'
 
-    name = "Аксессуары" if account == 'accessories' else "Дианы"
     print(f"[ACCOUNT] Пользователь {chat_id} выбрал: {name}")
-
     bot.answer_callback_query(call.id, f"Выбран: {name}")
     bot.edit_message_text(
         f"✅ Аккаунт: <b>{name}</b>\n\nТеперь выбери категорию групп:",
@@ -204,13 +277,31 @@ def choose_account(call):
     )
     bot.send_message(chat_id, "Выбери категорию:", reply_markup=category_kb())
 
+# ============ ВЫБОР КАТЕГОРИИ ============
+
 @bot.message_handler(func=lambda m: m.text in ["📁 Обычные группы", "⭐ Крупные группы"])
 def choose_category(message):
     chat_id = message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'category':
+    state = get_user_state(chat_id)
+
+    if state not in ['category', 'edit_groups']:
         return
 
     category = 'usual' if 'Обычные' in message.text else 'large'
+    data = get_user_data(chat_id)
+
+    if state == 'edit_groups':
+        # Режим редактирования
+        ad_id = data.get('editing_ad_id')
+        if ad_id:
+            update_scheduled_ad(ad_id, {'category': category})
+            cat_name = "Обычные" if category == 'usual' else "Крупные"
+            bot.send_message(chat_id, f"✅ Группы изменены на: {cat_name}", reply_markup=main_kb())
+            set_user_state(chat_id, 'main')
+            show_scheduled_list(chat_id)
+        return
+
+    # Обычный flow
     user_data[chat_id]['category'] = category
     user_data[chat_id]['state'] = 'photo'
 
@@ -221,10 +312,14 @@ def choose_category(message):
         reply_markup=photo_kb()
     )
 
+# ============ ФОТО ============
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     chat_id = message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'photo':
+    state = get_user_state(chat_id)
+
+    if state != 'photo':
         return
 
     photos = user_data[chat_id]['photos']
@@ -251,43 +346,215 @@ def handle_photo(message):
 @bot.message_handler(func=lambda m: m.text == "✅ Закончить отправку фото")
 def finish_photos(message):
     chat_id = message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'photo':
+    state = get_user_state(chat_id)
+
+    if state != 'photo':
         return
     if not user_data[chat_id]['photos']:
         return bot.send_message(chat_id, "❌ Ни одного фото. Отправь хотя бы одно.")
 
     user_data[chat_id]['state'] = 'text'
-    print(f"[FINISH] Файлы: {user_data[chat_id]['photos']}")
+    print(f"[FINISH PHOTOS] Файлы: {user_data[chat_id]['photos']}")
     from telebot.types import ReplyKeyboardRemove
     bot.send_message(chat_id, "✏️ Теперь отправь текст объявления:", reply_markup=ReplyKeyboardRemove())
 
-@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'text')
+# ============ ТЕКСТ ============
+
+@bot.message_handler(func=lambda m: get_user_state(m.chat.id) == 'text')
 def handle_text(message):
     chat_id = message.chat.id
+    data = get_user_data(chat_id)
+
     user_data[chat_id]['text'] = message.text
-    user_data[chat_id]['state'] = 'confirm'
 
-    account = user_data[chat_id].get('account', 'accessories')
-    acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
+    if data.get('mode') == 'schedule':
+        # Режим планирования — переходим к выбору дней
+        user_data[chat_id]['state'] = 'days'
+        user_data[chat_id]['days'] = []
+        bot.send_message(
+            chat_id,
+            "📅 Выберите дни недели для отправки:",
+            reply_markup=days_inline_kb([])
+        )
+    else:
+        # Обычный режим — показываем предпросмотр
+        user_data[chat_id]['state'] = 'confirm'
+        account = data.get('account', 'accessories')
+        acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
+        preview = (
+            f"📋 Предпросмотр:\n\n"
+            f"{message.text}\n\n"
+            f"📷 Фото: {len(data['photos'])}\n"
+            f"👤 Аккаунт: {acc_name}"
+        )
+        bot.send_message(chat_id, preview, reply_markup=confirm_kb())
 
-    preview = (
-        f"📋 Предпросмотр:\n\n"
-        f"{message.text}\n\n"
-        f"📷 Фото: {len(user_data[chat_id]['photos'])}\n"
-        f"👤 Аккаунт: {acc_name}"
+# ============ ВЫБОР ДНЕЙ НЕДЕЛИ ============
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('day_'))
+def choose_day(call):
+    chat_id = call.message.chat.id
+    state = get_user_state(chat_id)
+
+    if state not in ['days', 'edit_days']:
+        bot.answer_callback_query(call.id, "❌ Это действие больше не актуально")
+        return
+
+    day_code = call.data.replace('day_', '')
+    data = get_user_data(chat_id)
+
+    if state == 'edit_days':
+        days = data.get('temp_days', [])
+    else:
+        days = data.get('days', [])
+
+    if day_code in days:
+        days.remove(day_code)
+    else:
+        days.append(day_code)
+
+    if state == 'edit_days':
+        user_data[chat_id]['temp_days'] = days
+    else:
+        user_data[chat_id]['days'] = days
+
+    days_str = format_days(days)
+
+    if days:
+        msg = f"Выбрано: {days_str}\n\nВыбрать ещё?"
+    else:
+        msg = "Выберите дни недели:"
+
+    bot.edit_message_text(
+        msg,
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        reply_markup=days_inline_kb(days)
     )
-    bot.send_message(chat_id, preview, reply_markup=confirm_kb())
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'days_finish')
+def finish_days(call):
+    chat_id = call.message.chat.id
+    state = get_user_state(chat_id)
+
+    if state not in ['days', 'edit_days']:
+        bot.answer_callback_query(call.id, "❌ Это действие больше не актуально")
+        return
+
+    data = get_user_data(chat_id)
+
+    if state == 'edit_days':
+        days = data.get('temp_days', [])
+        if not days:
+            bot.answer_callback_query(call.id, "❌ Выберите хотя бы один день!")
+            return
+
+        ad_id = data.get('editing_ad_id')
+        ad = get_scheduled_ad_by_id(ad_id)
+
+        if ad and check_time_conflict(chat_id, days, ad['time'], exclude_id=ad_id):
+            bot.answer_callback_query(call.id, "❌ Конфликт времени!")
+            bot.send_message(chat_id, "❌ Эти дни и время уже заняты другим объявлением. Выберите другие дни.")
+            return
+
+        update_scheduled_ad(ad_id, {'days': days})
+        days_str = format_days(days)
+        bot.edit_message_text(
+            f"✅ Дни изменены на: {days_str}",
+            chat_id=chat_id,
+            message_id=call.message.message_id
+        )
+        bot.answer_callback_query(call.id)
+        bot.send_message(chat_id, "✅ Дни публикации обновлены", reply_markup=main_kb())
+        set_user_state(chat_id, 'main')
+        show_scheduled_list(chat_id)
+        return
+
+    # Обычный flow
+    days = data.get('days', [])
+    if not days:
+        bot.answer_callback_query(call.id, "❌ Выберите хотя бы один день!")
+        return
+
+    days_str = format_days(days)
+    user_data[chat_id]['state'] = 'time'
+
+    bot.edit_message_text(
+        f"✅ Выбраны дни недели: {days_str}\n\nТеперь напишите время публикации (формат 16:00):",
+        chat_id=chat_id,
+        message_id=call.message.message_id
+    )
+    bot.send_message(chat_id, "Введите время:", reply_markup=back_kb())
+    bot.answer_callback_query(call.id)
+
+# ============ ВВОД ВРЕМЕНИ ============
+
+@bot.message_handler(func=lambda m: get_user_state(m.chat.id) == 'time')
+def handle_time(message):
+    chat_id = message.chat.id
+    time_str = message.text.strip()
+    data = get_user_data(chat_id)
+
+    # Проверка формата времени
+    try:
+        datetime.strptime(time_str, "%H:%M")
+    except ValueError:
+        bot.send_message(chat_id, "❌ Неверный формат. Введите время как 16:00", reply_markup=back_kb())
+        return
+
+    # Проверка конфликта времени
+    days = data.get('days', [])
+    if check_time_conflict(chat_id, days, time_str):
+        bot.send_message(
+            chat_id,
+            "❌ К сожалению, это время уже занято. Выберите другое время:",
+            reply_markup=back_kb()
+        )
+        return
+
+    user_data[chat_id]['time'] = time_str
+    user_data[chat_id]['state'] = 'schedule_confirm'
+
+    # Показываем предпросмотр
+    account = data.get('account', 'accessories')
+    acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
+    category_name = "Обычные" if data['category'] == 'usual' else "Крупные"
+    days_str = format_days(data['days'])
+
+    # Отправляем фото
+    for photo_path in data['photos']:
+        with open(photo_path, 'rb') as f:
+            bot.send_photo(chat_id, f)
+
+    # Отправляем текст
+    bot.send_message(chat_id, data['text'])
+
+    # Отправляем сводку
+    summary = (
+        f"📋 Публикация объявления\n\n"
+        f"👤 Выбран аккаунт: <b>{acc_name}</b>\n"
+        f"📁 Выбраны группы: <b>{category_name}</b>\n"
+        f"📅 Выбраны дни: <b>{days_str}</b>\n"
+        f"⏰ Выбрано время: <b>{time_str}</b>\n\n"
+        f"Всё готово?"
+    )
+    bot.send_message(chat_id, summary, parse_mode='HTML', reply_markup=confirm_kb())
+
+# ============ ПОДТВЕРЖДЕНИЕ ОТПРАВКИ / ПЛАНИРОВАНИЯ ============
 
 @bot.message_handler(func=lambda m: m.text == "☑️ Готово")
 def confirm_send(message):
     chat_id = message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'confirm':
+    state = get_user_state(chat_id)
+
+    if state not in ['confirm', 'schedule_confirm']:
         return
 
-    data = user_data[chat_id]
+    data = get_user_data(chat_id)
 
-    # Если режим планирования — сохраняем в БД
-    if data.get('mode') == 'schedule':
+    # === РЕЖИМ ПЛАНИРОВАНИЯ ===
+    if state == 'schedule_confirm':
         save_scheduled_ad(
             chat_id=chat_id,
             text=data['text'],
@@ -318,7 +585,7 @@ def confirm_send(message):
         user_data[chat_id] = {'state': 'main'}
         return
 
-    # Обычная отправка
+    # === ОБЫЧНАЯ ОТПРАВКА ===
     account = data.get('account', 'accessories')
     acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
 
@@ -369,147 +636,29 @@ def confirm_send(message):
 @bot.message_handler(func=lambda m: m.text == "🔄 Изменить")
 def reset_ad(message):
     chat_id = message.chat.id
-    if chat_id in user_data:
-        for p in user_data[chat_id].get('photos', []):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except:
-                pass
+    state = get_user_state(chat_id)
+    data = get_user_data(chat_id)
 
-    user_data[chat_id] = {
-        'state': 'account',
-        'photos': [], 'text': '', 'category': None, 'account': None,
-        'mode': user_data.get(chat_id, {}).get('mode', 'instant')
-    }
+    if state not in ['confirm', 'schedule_confirm']:
+        return
+
+    mode = data.get('mode', 'instant')
+
+    # Чистим фото
+    for p in data.get('photos', []):
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except:
+            pass
+
+    init_user_data(chat_id, mode=mode)
     print(f"[RESET] Пользователь {chat_id} сбросил объявление")
     bot.send_message(
         chat_id,
-        "Через какой аккаунт отправляем?",
+        "🔄 Начнём заново. Через какой аккаунт отправляем?",
         reply_markup=account_inline_kb()
     )
-
-# ============ ЗАПЛАНИРОВАННАЯ ОТПРАВКА ============
-
-@bot.message_handler(func=lambda m: m.text == "📅 Запланировать отправку")
-def schedule_ad_start(message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {
-        'state': 'account',
-        'photos': [], 'text': '', 'category': None, 'account': None,
-        'mode': 'schedule', 'days': [], 'time': None
-    }
-    bot.send_message(
-        chat_id,
-        "📅 Запланировать отправку\n\nЧерез какой аккаунт отправляем?",
-        reply_markup=account_inline_kb()
-    )
-
-# ============ ВЫБОР ДНЕЙ НЕДЕЛИ ============
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('day_'))
-def choose_day(call):
-    chat_id = call.message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'days':
-        return
-
-    day_code = call.data.replace('day_', '')
-    days = user_data[chat_id]['days']
-
-    if day_code in days:
-        days.remove(day_code)
-    else:
-        days.append(day_code)
-
-    days_str = format_days(days)
-
-    if days:
-        msg = f"Выбрано: {days_str}\n\nВыбрать ещё?"
-    else:
-        msg = "Выберите дни недели:"
-
-    bot.edit_message_text(
-        msg,
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        reply_markup=days_inline_kb(days)
-    )
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'days_finish')
-def finish_days(call):
-    chat_id = call.message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'days':
-        return
-
-    days = user_data[chat_id]['days']
-    if not days:
-        bot.answer_callback_query(call.id, "❌ Выберите хотя бы один день!")
-        return
-
-    days_str = format_days(days)
-    user_data[chat_id]['state'] = 'time'
-
-    bot.edit_message_text(
-        f"✅ Выбраны дни недели: {days_str}\n\nТеперь напишите время публикации (формат 16:00):",
-        chat_id=chat_id,
-        message_id=call.message.message_id
-    )
-    bot.send_message(chat_id, "Введите время:", reply_markup=back_kb())
-    bot.answer_callback_query(call.id)
-
-# ============ ВВОД ВРЕМЕНИ ============
-
-@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'time')
-def handle_time(message):
-    chat_id = message.chat.id
-    time_str = message.text.strip()
-
-    # Проверка формата времени
-    try:
-        datetime.strptime(time_str, "%H:%M")
-    except ValueError:
-        bot.send_message(chat_id, "❌ Неверный формат. Введите время как 16:00")
-        return
-
-    # Проверка конфликта времени
-    days = user_data[chat_id]['days']
-    if check_time_conflict(chat_id, days, time_str):
-        bot.send_message(
-            chat_id,
-            "❌ К сожалению, это время уже занято. Выберите другое время:",
-            reply_markup=back_kb()
-        )
-        return
-
-    user_data[chat_id]['time'] = time_str
-    user_data[chat_id]['state'] = 'schedule_confirm'
-
-    # Показываем предпросмотр
-    data = user_data[chat_id]
-    account = data.get('account', 'accessories')
-    acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
-    category_name = "Обычные" if data['category'] == 'usual' else "Крупные"
-    days_str = format_days(data['days'])
-
-    # Отправляем фото
-    for photo_path in data['photos']:
-        with open(photo_path, 'rb') as f:
-            bot.send_photo(chat_id, f)
-
-    # Отправляем текст
-    bot.send_message(chat_id, data['text'])
-
-    # Отправляем сводку
-    summary = (
-        f"📋 Публикация объявления\n\n"
-        f"👤 Выбран аккаунт: <b>{acc_name}</b>\n"
-        f"📁 Выбраны группы: <b>{category_name}</b>\n"
-        f"📅 Выбраны дни: <b>{days_str}</b>\n"
-        f"⏰ Выбрано время: <b>{time_str}</b>\n\n"
-        f"Всё готово?"
-    )
-    bot.send_message(chat_id, summary, parse_mode='HTML', reply_markup=confirm_kb())
 
 # ============ СПИСОК ЗАПЛАНИРОВАННЫХ ============
 
@@ -550,40 +699,42 @@ def show_scheduled_detail(call):
         f"📅 Дни: <b>{days_str}</b>\n"
         f"⏰ Время: <b>{ad['time']}</b>"
     )
-    bot.send_message(chat_id, detail_msg, parse_mode='HTML', reply_markup=scheduled_detail_kb(ad_id))
+    bot.send_message(chat_id, detail_msg, parse_mode='HTML', reply_markup=scheduled_detail_kb())
     bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'sched_add')
 def add_more_scheduled(call):
     chat_id = call.message.chat.id
-    schedule_ad_start(call.message)
+    init_user_data(chat_id, mode='schedule')
+    bot.send_message(
+        chat_id,
+        "📅 Создание нового запланированного объявления\n\nЧерез какой аккаунт отправляем?",
+        reply_markup=account_inline_kb()
+    )
     bot.answer_callback_query(call.id)
 
 # ============ ИЗМЕНЕНИЕ ЗАПЛАНИРОВАННОГО ============
 
-@bot.message_handler(func=lambda m: m.text == "📝 Изменить объявление" and user_data.get(m.chat.id, {}).get('state') == 'scheduled_detail')
+@bot.message_handler(func=lambda m: m.text == "📝 Изменить объявление" and get_user_state(m.chat.id) == 'scheduled_detail')
 def edit_ad_text(message):
     chat_id = message.chat.id
-    ad_id = user_data[chat_id]['viewing_ad_id']
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
 
     # Удаляем старое объявление и начинаем заново
-    delete_scheduled_ad(ad_id)
+    if ad_id:
+        delete_scheduled_ad(ad_id)
 
-    user_data[chat_id] = {
-        'state': 'account',
-        'photos': [], 'text': '', 'category': None, 'account': None,
-        'mode': 'schedule', 'days': [], 'time': None
-    }
+    init_user_data(chat_id, mode='schedule')
     bot.send_message(
         chat_id,
         "📝 Изменение объявления\n\nНачнём заново. Через какой аккаунт отправляем?",
         reply_markup=account_inline_kb()
     )
 
-@bot.message_handler(func=lambda m: m.text == "👤 Изменить аккаунт" and user_data.get(m.chat.id, {}).get('state') == 'scheduled_detail')
+@bot.message_handler(func=lambda m: m.text == "👤 Изменить аккаунт" and get_user_state(m.chat.id) == 'scheduled_detail')
 def edit_account(message):
     chat_id = message.chat.id
-    ad_id = user_data[chat_id]['viewing_ad_id']
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
 
     user_data[chat_id]['state'] = 'edit_account'
     user_data[chat_id]['editing_ad_id'] = ad_id
@@ -593,31 +744,10 @@ def edit_account(message):
         reply_markup=account_inline_kb()
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('acc_') and user_data.get(call.message.chat.id, {}).get('state') == 'edit_account')
-def save_edited_account(call):
-    chat_id = call.message.chat.id
-    account = 'accessories' if call.data == 'acc_accessories' else 'autosale'
-    ad_id = user_data[chat_id]['editing_ad_id']
-
-    update_scheduled_ad(ad_id, {'account': account})
-
-    name = "Аксессуары" if account == 'accessories' else "Дианы"
-    bot.edit_message_text(
-        f"✅ Аккаунт изменён на: <b>{name}</b>",
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        parse_mode='HTML'
-    )
-    bot.answer_callback_query(call.id, f"Выбран: {name}")
-
-    # Возвращаем к деталям
-    show_scheduled_list(chat_id)
-    user_data[chat_id] = {'state': 'main'}
-
-@bot.message_handler(func=lambda m: m.text == "📁 Изменить группы" and user_data.get(m.chat.id, {}).get('state') == 'scheduled_detail')
+@bot.message_handler(func=lambda m: m.text == "📁 Изменить группы" and get_user_state(m.chat.id) == 'scheduled_detail')
 def edit_groups(message):
     chat_id = message.chat.id
-    ad_id = user_data[chat_id]['viewing_ad_id']
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
 
     user_data[chat_id]['state'] = 'edit_groups'
     user_data[chat_id]['editing_ad_id'] = ad_id
@@ -627,22 +757,10 @@ def edit_groups(message):
         reply_markup=category_kb()
     )
 
-@bot.message_handler(func=lambda m: m.text in ["📁 Обычные группы", "⭐ Крупные группы"] and user_data.get(m.chat.id, {}).get('state') == 'edit_groups')
-def save_edited_groups(message):
-    chat_id = message.chat.id
-    category = 'usual' if 'Обычные' in message.text else 'large'
-    ad_id = user_data[chat_id]['editing_ad_id']
-
-    update_scheduled_ad(ad_id, {'category': category})
-
-    bot.send_message(chat_id, f"✅ Группы изменены на: {'Обычные' if category == 'usual' else 'Крупные'}", reply_markup=main_kb())
-    show_scheduled_list(chat_id)
-    user_data[chat_id] = {'state': 'main'}
-
-@bot.message_handler(func=lambda m: m.text == "📅 Изменить дни публикации" and user_data.get(m.chat.id, {}).get('state') == 'scheduled_detail')
+@bot.message_handler(func=lambda m: m.text == "📅 Изменить дни публикации" and get_user_state(m.chat.id) == 'scheduled_detail')
 def edit_days(message):
     chat_id = message.chat.id
-    ad_id = user_data[chat_id]['viewing_ad_id']
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
 
     user_data[chat_id]['state'] = 'edit_days'
     user_data[chat_id]['editing_ad_id'] = ad_id
@@ -654,66 +772,10 @@ def edit_days(message):
         reply_markup=days_inline_kb([])
     )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('day_') and user_data.get(call.message.chat.id, {}).get('state') == 'edit_days')
-def choose_edit_day(call):
-    chat_id = call.message.chat.id
-    day_code = call.data.replace('day_', '')
-    days = user_data[chat_id]['temp_days']
-
-    if day_code in days:
-        days.remove(day_code)
-    else:
-        days.append(day_code)
-
-    days_str = format_days(days)
-
-    if days:
-        msg = f"Выбрано: {days_str}\n\nВыбрать ещё?"
-    else:
-        msg = "Выберите дни недели:"
-
-    bot.edit_message_text(
-        msg,
-        chat_id=chat_id,
-        message_id=call.message.message_id,
-        reply_markup=days_inline_kb(days)
-    )
-    bot.answer_callback_query(call.id)
-
-@bot.callback_query_handler(func=lambda call: call.data == 'days_finish' and user_data.get(call.message.chat.id, {}).get('state') == 'edit_days')
-def finish_edit_days(call):
-    chat_id = call.message.chat.id
-    days = user_data[chat_id]['temp_days']
-    if not days:
-        bot.answer_callback_query(call.id, "❌ Выберите хотя бы один день!")
-        return
-
-    ad_id = user_data[chat_id]['editing_ad_id']
-    ad = get_scheduled_ad_by_id(ad_id)
-
-    # Проверяем конфликт с другими объявлениями
-    if check_time_conflict(chat_id, days, ad['time'], exclude_id=ad_id):
-        bot.answer_callback_query(call.id, "❌ Конфликт времени с другим объявлением!")
-        bot.send_message(chat_id, "❌ Эти дни и время уже заняты другим объявлением. Выберите другие дни.")
-        return
-
-    update_scheduled_ad(ad_id, {'days': days})
-
-    days_str = format_days(days)
-    bot.edit_message_text(
-        f"✅ Дни изменены на: {days_str}",
-        chat_id=chat_id,
-        message_id=call.message.message_id
-    )
-    bot.answer_callback_query(call.id)
-    bot.send_message(chat_id, "✅ Дни публикации обновлены", reply_markup=main_kb())
-    show_scheduled_list(chat_id)
-    user_data[chat_id] = {'state': 'main'}
-
-@bot.message_handler(func=lambda m: m.text == "⏰ Изменить время публикации" and user_data.get(m.chat.id, {}).get('state') == 'scheduled_detail')
+@bot.message_handler(func=lambda m: m.text == "⏰ Изменить время публикации" and get_user_state(m.chat.id) == 'scheduled_detail')
 def edit_time(message):
     chat_id = message.chat.id
-    ad_id = user_data[chat_id]['viewing_ad_id']
+    ad_id = get_user_data(chat_id).get('viewing_ad_id')
 
     user_data[chat_id]['state'] = 'edit_time'
     user_data[chat_id]['editing_ad_id'] = ad_id
@@ -723,21 +785,22 @@ def edit_time(message):
         reply_markup=back_kb()
     )
 
-@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'edit_time')
+@bot.message_handler(func=lambda m: get_user_state(m.chat.id) == 'edit_time')
 def save_edited_time(message):
     chat_id = message.chat.id
     time_str = message.text.strip()
-    ad_id = user_data[chat_id]['editing_ad_id']
+    data = get_user_data(chat_id)
+    ad_id = data.get('editing_ad_id')
 
     try:
         datetime.strptime(time_str, "%H:%M")
     except ValueError:
-        bot.send_message(chat_id, "❌ Неверный формат. Введите время как 16:00")
+        bot.send_message(chat_id, "❌ Неверный формат. Введите время как 16:00", reply_markup=back_kb())
         return
 
     ad = get_scheduled_ad_by_id(ad_id)
 
-    if check_time_conflict(chat_id, ad['days'], time_str, exclude_id=ad_id):
+    if ad and check_time_conflict(chat_id, ad['days'], time_str, exclude_id=ad_id):
         bot.send_message(
             chat_id,
             "❌ К сожалению, это время уже занято. Выберите другое время:",
@@ -747,51 +810,22 @@ def save_edited_time(message):
 
     update_scheduled_ad(ad_id, {'time': time_str})
     bot.send_message(chat_id, f"✅ Время изменено на: {time_str}", reply_markup=main_kb())
+    set_user_state(chat_id, 'main')
     show_scheduled_list(chat_id)
-    user_data[chat_id] = {'state': 'main'}
 
 # ============ КНОПКА НАЗАД ============
 
 @bot.message_handler(func=lambda m: m.text == "◀️ Назад")
 def go_back(message):
     chat_id = message.chat.id
-    state = user_data.get(chat_id, {}).get('state', 'main')
+    state = get_user_state(chat_id)
+    data = get_user_data(chat_id)
 
     # Маршрутизация назад
-    if state in ['time', 'edit_time']:
+    if state == 'time':
         # Назад к выбору дней
-        if state == 'edit_time':
-            user_data[chat_id]['state'] = 'scheduled_detail'
-            ad_id = user_data[chat_id].get('viewing_ad_id')
-            if ad_id:
-                # Показываем детали снова
-                ad = get_scheduled_ad_by_id(ad_id)
-                if ad:
-                    account_name = "Аксессуары" if ad['account'] == 'accessories' else "Дианы"
-                    category_name = "Обычные" if ad['category'] == 'usual' else "Крупные"
-                    days_str = format_days(ad['days'])
-
-                    photos = ad.get('photos', [])
-                    if photos:
-                        for photo_path in photos:
-                            if os.path.exists(photo_path):
-                                with open(photo_path, 'rb') as f:
-                                    bot.send_photo(chat_id, f)
-
-                    detail_msg = (
-                        f"{ad['text']}\n\n"
-                        f"📊 Детали:\n"
-                        f"👤 Аккаунт: <b>{account_name}</b>\n"
-                        f"📁 Группы: <b>{category_name}</b>\n"
-                        f"📅 Дни: <b>{days_str}</b>\n"
-                        f"⏰ Время: <b>{ad['time']}</b>"
-                    )
-                    bot.send_message(chat_id, detail_msg, parse_mode='HTML', reply_markup=scheduled_detail_kb(ad_id))
-            return
-
-        # Для нового объявления — назад к дням
         user_data[chat_id]['state'] = 'days'
-        days = user_data[chat_id].get('days', [])
+        days = data.get('days', [])
         days_str = format_days(days)
         if days:
             msg = f"Выбрано: {days_str}\n\nВыбрать ещё?"
@@ -800,6 +834,11 @@ def go_back(message):
         bot.send_message(chat_id, msg, reply_markup=days_inline_kb(days))
 
     elif state == 'days':
+        # Назад к тексту
+        user_data[chat_id]['state'] = 'text'
+        bot.send_message(chat_id, "✏️ Отправь текст объявления:", reply_markup=back_kb())
+
+    elif state == 'text':
         # Назад к фото
         user_data[chat_id]['state'] = 'photo'
         bot.send_message(
@@ -824,72 +863,17 @@ def go_back(message):
 
     elif state in ['scheduled_detail', 'edit_account', 'edit_groups', 'edit_days', 'edit_time']:
         # Назад к списку запланированных
-        user_data[chat_id] = {'state': 'main'}
+        set_user_state(chat_id, 'main')
         show_scheduled_list(chat_id)
 
-    elif state in ['text', 'confirm', 'schedule_confirm']:
-        # Назад к фото
-        user_data[chat_id]['state'] = 'photo'
-        bot.send_message(
-            chat_id,
-            "📷 Отправь фото (до 10 шт.). Когда закончишь — нажми кнопку ниже.",
-            reply_markup=photo_kb()
-        )
+    elif state in ['confirm', 'schedule_confirm']:
+        # Назад к тексту
+        user_data[chat_id]['state'] = 'text'
+        bot.send_message(chat_id, "✏️ Отправь текст объявления:", reply_markup=back_kb())
 
     else:
         user_data[chat_id] = {'state': 'main'}
         bot.send_message(chat_id, "👋 Главное меню", reply_markup=main_kb())
-
-# ============ ПЕРЕХВАТ СТЕЙТА ДЛЯ РЕЖИМА ПЛАНИРОВАНИЯ ============
-
-# Переопределяем finish_photos для режима планирования
-_original_finish_photos = finish_photos
-
-@bot.message_handler(func=lambda m: m.text == "✅ Закончить отправку фото")
-def finish_photos_schedule(message):
-    chat_id = message.chat.id
-    if user_data.get(chat_id, {}).get('state') != 'photo':
-        return
-    if not user_data[chat_id]['photos']:
-        return bot.send_message(chat_id, "❌ Ни одного фото. Отправь хотя бы одно.")
-
-    if user_data[chat_id].get('mode') == 'schedule':
-        user_data[chat_id]['state'] = 'text'
-        from telebot.types import ReplyKeyboardRemove
-        bot.send_message(chat_id, "✏️ Теперь отправь текст объявления:", reply_markup=ReplyKeyboardRemove())
-    else:
-        # Обычный режим
-        user_data[chat_id]['state'] = 'text'
-        from telebot.types import ReplyKeyboardRemove
-        bot.send_message(chat_id, "✏️ Теперь отправь текст объявления:", reply_markup=ReplyKeyboardRemove())
-
-# Переопределяем handle_text для режима планирования
-@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('state') == 'text')
-def handle_text_schedule(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['text'] = message.text
-
-    if user_data[chat_id].get('mode') == 'schedule':
-        # Переходим к выбору дней
-        user_data[chat_id]['state'] = 'days'
-        user_data[chat_id]['days'] = []
-        bot.send_message(
-            chat_id,
-            "📅 Выберите дни недели для отправки:",
-            reply_markup=days_inline_kb([])
-        )
-    else:
-        # Обычный режим
-        user_data[chat_id]['state'] = 'confirm'
-        account = user_data[chat_id].get('account', 'accessories')
-        acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
-        preview = (
-            f"📋 Предпросмотр:\n\n"
-            f"{message.text}\n\n"
-            f"📷 Фото: {len(user_data[chat_id]['photos'])}\n"
-            f"👤 Аккаунт: {acc_name}"
-        )
-        bot.send_message(chat_id, preview, reply_markup=confirm_kb())
 
 # ============ ПЛАНИРОВЩИК ============
 
@@ -904,24 +888,23 @@ def check_and_send_scheduled():
     from db_worker import get_due_ads, mark_ad_sent
 
     now = datetime.now()
-    current_day = now.strftime('%a').lower()[:3]  # mon, tue, etc.
-    # Преобразуем в наши коды
-    day_map = {'mon': 'mon', 'tue': 'tue', 'wed': 'wed', 'thu': 'thu', 'fri': 'fri', 'sat': 'sat', 'sun': 'sun'}
-    current_day_code = day_map.get(current_day, '')
+    day_map = {'Mon': 'mon', 'Tue': 'tue', 'Wed': 'wed', 'Thu': 'thu', 'Fri': 'fri', 'Sat': 'sat', 'Sun': 'sun'}
+    current_day_code = day_map.get(now.strftime('%a'), '')
     current_time = now.strftime('%H:%M')
+
+    if not current_day_code:
+        return
 
     due_ads = get_due_ads(current_day_code, current_time)
 
     for ad in due_ads:
         chat_id = ad['chat_id']
         try:
-            # Отправляем сообщение о начале
             status_msg = bot.send_message(chat_id, "⏳ Начинаю отправку объявления...")
 
             account = ad.get('account', 'accessories')
             acc_name = "Аксессуары" if account == 'accessories' else "Дианы"
 
-            # Отправляем в ВК
             report = send_to_vk_groups(
                 ad['text'],
                 ad['photos'],
@@ -929,13 +912,11 @@ def check_and_send_scheduled():
                 account=account
             )
 
-            # Удаляем статусное сообщение
             try:
                 bot.delete_message(chat_id, status_msg.message_id)
             except:
                 pass
 
-            # Отправляем отчёт
             bot.send_message(
                 chat_id,
                 f"📋 Объявление отправлено!\n\n{report}",
@@ -953,14 +934,12 @@ def check_and_send_scheduled():
             )
             bot.send_message(chat_id, info_msg, parse_mode='HTML', reply_markup=main_kb())
 
-            # Отмечаем как отправленное (на сегодня)
             mark_ad_sent(ad['id'], current_day_code)
 
         except Exception as e:
             print(f"[SCHEDULER ERROR] Ad {ad['id']}: {e}")
             bot.send_message(chat_id, f"🔥 Ошибка при отправке запланированного объявления:\n\n{str(e)}", reply_markup=main_kb())
 
-# Добавляем задачу в планировщик — проверка каждую минуту
 schedule.every(1).minutes.do(check_and_send_scheduled)
 
 # ============ FALLBACK ============
@@ -981,7 +960,6 @@ def run_bot():
 if __name__ == '__main__':
     print(f"[Server] Flask на порту {PORT}")
 
-    # Запускаем планировщик в отдельном потоке
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     print("[Scheduler] Планировщик запущен")
