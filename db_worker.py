@@ -2,7 +2,7 @@ import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,6 +28,19 @@ def get_conn():
     except Exception as e:
         print(f"[DB] Ошибка подключения: {e}")
         return None
+
+def _safe_json_loads(value):
+    """Безопасно парсит JSON — если уже объект, возвращает как есть"""
+    if value is None:
+        return [] if isinstance(value, list) else {}
+    if isinstance(value, (list, dict)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except:
+            return [] if value.startswith('[') else {}
+    return value
 
 def init_db():
     """Создаёт таблицу если её нет"""
@@ -79,7 +92,7 @@ def save_scheduled_ad(chat_id, text, photos, category, account, days, time):
                     INSERT INTO scheduled_ads (chat_id, text, photos, category, account, days, time, created_at, last_sent)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id;
-                """, (chat_id, text, json.dumps(photos), category, account, json.dumps(days), time, datetime.now().isoformat(), json.dumps({})))
+                """, (chat_id, text, json.dumps(photos), category, account, json.dumps(days), time, datetime.now(timezone.utc).isoformat(), json.dumps({})))
                 result = cur.fetchone()
                 conn.commit()
                 return result[0]
@@ -88,7 +101,6 @@ def save_scheduled_ad(chat_id, text, photos, category, account, days, time):
         finally:
             conn.close()
 
-    # Fallback to memory
     ad_id = _get_next_id()
     _in_memory_ads[ad_id] = {
         'chat_id': chat_id,
@@ -98,7 +110,7 @@ def save_scheduled_ad(chat_id, text, photos, category, account, days, time):
         'account': account,
         'days': days,
         'time': time,
-        'created_at': datetime.now().isoformat(),
+        'created_at': datetime.now(timezone.utc).isoformat(),
         'last_sent': {}
     }
     return ad_id
@@ -119,13 +131,13 @@ def get_scheduled_ads(chat_id):
                         'id': row['id'],
                         'chat_id': row['chat_id'],
                         'text': row['text'],
-                        'photos': json.loads(row['photos']) if row['photos'] else [],
+                        'photos': _safe_json_loads(row['photos']),
                         'category': row['category'],
                         'account': row['account'],
-                        'days': json.loads(row['days']) if row['days'] else [],
+                        'days': _safe_json_loads(row['days']),
                         'time': row['time'],
                         'created_at': row['created_at'],
-                        'last_sent': json.loads(row['last_sent']) if row['last_sent'] else {}
+                        'last_sent': _safe_json_loads(row['last_sent'])
                     })
                 return ads
         except Exception as e:
@@ -133,7 +145,6 @@ def get_scheduled_ads(chat_id):
         finally:
             conn.close()
 
-    # Fallback to memory
     ads = []
     for ad_id, ad in _in_memory_ads.items():
         if ad['chat_id'] == chat_id:
@@ -157,13 +168,13 @@ def get_scheduled_ad_by_id(ad_id):
                         'id': row['id'],
                         'chat_id': row['chat_id'],
                         'text': row['text'],
-                        'photos': json.loads(row['photos']) if row['photos'] else [],
+                        'photos': _safe_json_loads(row['photos']),
                         'category': row['category'],
                         'account': row['account'],
-                        'days': json.loads(row['days']) if row['days'] else [],
+                        'days': _safe_json_loads(row['days']),
                         'time': row['time'],
                         'created_at': row['created_at'],
-                        'last_sent': json.loads(row['last_sent']) if row['last_sent'] else {}
+                        'last_sent': _safe_json_loads(row['last_sent'])
                     }
         except Exception as e:
             print(f"[DB] Ошибка получения объявления: {e}")
@@ -203,7 +214,6 @@ def update_scheduled_ad(ad_id, updates):
     conn = get_conn()
     if conn:
         try:
-            # Формируем SET часть динамически
             set_parts = []
             values = []
             for key, value in updates.items():
@@ -246,7 +256,7 @@ def check_time_conflict(chat_id, days, time_str, exclude_id=None):
 def get_due_ads(day_code, time_str):
     """Получает объявления, которые нужно отправить сейчас"""
     conn = get_conn()
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
     if conn:
         try:
@@ -255,15 +265,15 @@ def get_due_ads(day_code, time_str):
                 rows = cur.fetchall()
                 due = []
                 for row in rows:
-                    days = json.loads(row['days']) if row['days'] else []
+                    days = _safe_json_loads(row['days'])
                     if day_code in days and row['time'] == time_str:
-                        last_sent = json.loads(row['last_sent']) if row['last_sent'] else {}
+                        last_sent = _safe_json_loads(row['last_sent'])
                         if last_sent.get(day_code) != today:
                             due.append({
                                 'id': row['id'],
                                 'chat_id': row['chat_id'],
                                 'text': row['text'],
-                                'photos': json.loads(row['photos']) if row['photos'] else [],
+                                'photos': _safe_json_loads(row['photos']),
                                 'category': row['category'],
                                 'account': row['account'],
                                 'days': days,
@@ -275,8 +285,8 @@ def get_due_ads(day_code, time_str):
         finally:
             conn.close()
 
-    # Fallback to memory
     due = []
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     for ad_id, ad in _in_memory_ads.items():
         if day_code in ad['days'] and ad['time'] == time_str:
             last_sent = ad.get('last_sent', {})
@@ -292,7 +302,7 @@ def mark_ad_sent(ad_id, day_code):
     if not ad:
         return
 
-    today = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     last_sent = ad.get('last_sent', {})
     last_sent[day_code] = today
 
