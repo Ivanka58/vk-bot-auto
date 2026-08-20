@@ -123,7 +123,9 @@ def scheduled_list_kb(ads):
     day_names = {'mon': 'пн', 'tue': 'вт', 'wed': 'ср', 'thu': 'чт', 'fri': 'пт', 'sat': 'сб', 'sun': 'вс'}
     for ad in ads:
         days_str = ', '.join([day_names.get(d, d) for d in ad['days']])
-        label = f"{days_str} — {ad['time']}"
+        acc_name = "аксессуары" if ad['account'] == 'accessories' else "дианы"
+        cat_name = "обычные" if ad['category'] == 'usual' else "крупные"
+        label = f"{days_str} - {ad['time']} ({acc_name}, {cat_name})"
         kb.add(InlineKeyboardButton(label, callback_data=f'sched_{ad["id"]}'))
     return kb
 
@@ -334,7 +336,7 @@ def choose_category(message):
     print(f"[CATEGORY] Пользователь {chat_id} выбрал {category}")
     bot.send_message(
         chat_id,
-        "📷 Отправь фото (до 10 шт.). Когда закончишь — нажми кнопку ниже.",
+        "📷 Отправь фото (до 10 шт.). Когда закончишь - нажми кнопку ниже.",
         reply_markup=photo_kb()
     )
 
@@ -854,7 +856,7 @@ def go_back(message):
         user_data[chat_id]['state'] = 'photo'
         bot.send_message(
             chat_id,
-            "📷 Отправь фото (до 10 шт.). Когда закончишь — нажми кнопку ниже.",
+            "📷 Отправь фото (до 10 шт.). Когда закончишь - нажми кнопку ниже.",
             reply_markup=photo_kb()
         )
 
@@ -885,7 +887,7 @@ def go_back(message):
 # ============ ПЛАНИРОВЩИК ============
 
 def run_scheduler():
-    """Фоновый поток для проверки расписания — каждые 30 секунд"""
+    """Фоновый поток для проверки расписания - каждые 30 секунд"""
     print("[SCHEDULER] Поток планировщика запущен")
     while True:
         try:
