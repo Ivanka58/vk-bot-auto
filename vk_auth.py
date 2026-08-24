@@ -1,21 +1,17 @@
 import os
-import vk
+import requests
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
 
 _api_cache = {}
 
-def get_vk_api(account='accessories'):
+def get_vk_token_direct(account='accessories'):
     """
-    Получает VK API через прямую авторизацию (DirectUserAPI).
-    Использует логин/пароль напрямую, минуя OAuth-страницы.
+    Получает токен VK через прямую авторизацию (Direct Auth).
+    Эмулирует официальное Android-приложение VK.
     """
-    global _api_cache
-
-    if account in _api_cache:
-        return _api_cache[account]
-
     if account == 'accessories':
         login = os.getenv('VK_LOGIN')
         password = os.getenv('VK_PASSWORD')
@@ -24,39 +20,56 @@ def get_vk_api(account='accessories'):
         password = os.getenv('VK_PASSWORD2')
 
     if not login or not password:
-        raise Exception(
-            f"Не указаны логин/пароль для аккаунта '{account}'.\n"
-            f"Добавьте в переменные окружения:\n"
-            f"VK_LOGIN / VK_PASSWORD (или VK_LOGIN2 / VK_PASSWORD2)"
-        )
+        raise Exception(f"Не указаны логин/пароль для '{account}'")
 
-    print(f"[VK_AUTH] Авторизация {account} через DirectUserAPI ({login})...")
+    print(f"[VK_AUTH] Прямая авторизация {account} ({login})...")
+
+    # Direct authorization endpoint (used by official VK Android app)
+    url = "https://oauth.vk.com/token"
+    params = {
+        'grant_type': 'password',
+        'client_id': '2274003',  # VK Android
+        'client_secret': 'hHbZxrka2uZ6jB1inYsH',
+        'username': login,
+        'password': password,
+        'scope': 'offline,photos,wall,groups',
+        'v': '5.199'
+    }
 
     try:
-        # DirectUserAPI - прямая авторизация через официальные client_id Android-приложения VK
-        api = vk.DirectUserAPI(
-            user_login=login,
-            user_password=password,
-            client_id=2274003,           # VK Android app ID
-            client_secret='hHbZxrka2uZ6jB1inYsH',
-            scope='offline,photos,wall,groups',
-            v='5.199'
-        )
+        response = requests.get(url, params=params, timeout=30)
+        data = response.json()
 
-        # Проверяем что авторизация прошла
-        me = api.users.get()[0]
-        print(f"[VK_AUTH] Успешно! Пользователь: {me['first_name']} {me['last_name']} (id{me['id']})")
+        if 'error' in data:
+            error_msg = data.get('error_description', data['error'])
+            print(f"[VK_AUTH] Ошибка: {error_msg}")
+            raise Exception(f"VK auth error: {error_msg}")
 
-        _api_cache[account] = api
-        return api
+        token = data['access_token']
+        user_id = data.get('user_id', '?')
+        print(f"[VK_AUTH] Успешно! user_id={user_id}, token={token[:20]}...")
+        return token
 
     except Exception as e:
-        print(f"[VK_AUTH] Ошибка DirectUserAPI: {e}")
-        raise Exception(
-            f"Не удалось авторизоваться в VK для '{account}'.\n"
-            f"Ошибка: {e}\n\n"
-            f"Возможные причины:\n"
-            f"1. Неверный логин/пароль\n"
-            f"2. VK требует подтверждение входа (проверьте уведомления в приложении VK)\n"
-            f"3. Аккаунт временно заблокирован для API-доступа"
-        )
+        print(f"[VK_AUTH] Ошибка запроса: {e}")
+        raise
+
+def get_vk_api(account='accessories'):
+    """Получает VK API сессию через vk_api с автоматически полученным токеном"""
+    global _api_cache
+
+    if account in _api_cache:
+        return _api_cache[account]
+
+    import vk_api
+
+    token = get_vk_token_direct(account)
+    vk_session = vk_api.VkApi(token=token)
+    api = vk_session.get_api()
+
+    # Проверяем
+    me = api.users.get()[0]
+    print(f"[VK_AUTH] API готов. Пользователь: {me['first_name']} {me['last_name']}")
+
+    _api_cache[account] = api
+    return api
