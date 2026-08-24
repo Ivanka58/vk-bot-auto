@@ -48,21 +48,34 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
     vk = get_vk_api(account)
 
     report_lines = []
+    error_count = 0
+    success_count = 0
 
     for group_id in groups:
         gid = int(group_id)
         print(f"\n[VK] --- Группа {group_id} ---")
 
         attachments = []
+        photo_error = None
         for path in photo_paths:
             try:
                 photo = upload_photo_to_wall(vk, path, group_id)
                 attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
                 print(f"[VK] Фото загружено: photo{photo['owner_id']}_{photo['id']}")
             except Exception as e:
+                photo_error = str(e)
                 print(f"[VK] Ошибка загрузки фото: {e}")
-                report_lines.append(f"❌ Группа {group_id}: ошибка загрузки фото - {e}")
-                continue
+                break  # Не пытаемся загружать остальные фото если токен не работает
+
+        if photo_error:
+            error_count += 1
+            # Сокращаем ошибку для отчета
+            short_error = photo_error[:100] + "..." if len(photo_error) > 100 else photo_error
+            report_lines.append(f"❌ Гр. {group_id}: {short_error}")
+            # Если ошибка авторизации - прерываем всё
+            if "invalid access_token" in photo_error or "authorization failed" in photo_error:
+                break
+            continue
 
         try:
             vk.wall.post(
@@ -72,10 +85,24 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
                 attachments=','.join(attachments)
             )
             print(f"[VK] Успешно отправлено в группу {group_id}")
-            report_lines.append(f"✅ Группа {group_id}: отправлено")
+            success_count += 1
+            report_lines.append(f"✅ Гр. {group_id}: ок")
         except Exception as e:
+            error_count += 1
+            short_error = str(e)[:100] + "..." if len(str(e)) > 100 else str(e)
             print(f"[VK] Ошибка отправки: {e}")
-            report_lines.append(f"❌ Группа {group_id}: {e}")
+            report_lines.append(f"❌ Гр. {group_id}: {short_error}")
 
     print("=" * 60)
-    return "\n".join(report_lines)
+
+    # Формируем краткий отчет чтобы не превысить лимит Telegram (4096 символов)
+    header = f"📊 Отчет: ✅ {success_count} | ❌ {error_count} | Всего: {len(groups)}\n\n"
+    report_text = "\n".join(report_lines)
+
+    # Если отчет слишком длинный - обрезаем
+    max_len = 3800  # запас под header
+    if len(report_text) > max_len:
+        report_text = report_text[:max_len] + "\n... (обрезано)"
+
+    return header + report_text
+
