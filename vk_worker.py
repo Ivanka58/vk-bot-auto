@@ -1,6 +1,7 @@
 import os
 import vk_api
 import requests
+from vk_auth import get_vk_api
 
 def upload_photo_to_wall(vk, path, group_id):
     gid = abs(int(group_id))
@@ -26,30 +27,25 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
     print(f"[VK] Категория: {category}")
 
     if account == 'accessories':
-        token = os.getenv('VK_TOKEN')
         groups_usual = os.getenv('GROUPS_USUAL', '')
         groups_large = os.getenv('GROUPS_LARGE', '')
     else:
-        token = os.getenv('VK_TOKEN2')
         groups_usual = os.getenv('GROUPS_USUAL2', os.getenv('GROUPS_USUAL', ''))
         groups_large = os.getenv('GROUPS_LARGE2', os.getenv('GROUPS_LARGE', ''))
-
-    if not token:
-        raise Exception(f"VK_TOKEN{'2' if account != 'accessories' else ''} не найден")
 
     if custom_groups:
         groups = custom_groups
     else:
         groups_str = groups_usual if category == 'usual' else groups_large
         groups = [g.strip() for g in groups_str.split(',') if g.strip()]
-    
+
     if not groups:
         raise Exception("Список групп пуст")
 
     print(f"[VK] Группы ({account}): {groups}")
 
-    vk_session = vk_api.VkApi(token=token)
-    vk = vk_session.get_api()
+    # Получаем VK API через vk_auth (автоматически по логину/паролю или готовому токену)
+    vk = get_vk_api(account)
 
     report_lines = []
 
@@ -59,61 +55,27 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
 
         attachments = []
         for path in photo_paths:
-            if not os.path.exists(path):
-                print(f"[VK] ФАЙЛ НЕ НАЙДЕН: {path}")
-                continue
             try:
-                ph = upload_photo_to_wall(vk, path, gid)
-                att = f"photo{ph['owner_id']}_{ph['id']}"
-                attachments.append(att)
-                print(f"[VK] Успех: {att}")
+                photo = upload_photo_to_wall(vk, path, group_id)
+                attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
+                print(f"[VK] Фото загружено: photo{photo['owner_id']}_{photo['id']}")
             except Exception as e:
-                err_msg = str(e)
-                print(f"[VK] ОШИБКА: {err_msg}")
-                if any(x in err_msg.lower() for x in ['group auth', 'unavailable with group', 'authorization failed']):
-                    raise Exception(
-                        "❌ Токен сообщества (группы) НЕ МОЖЕТ загружать фото на стену ВКонтакте.\n\n"
-                        "✅ Решение за 2 минуты:\n"
-                        "1. Открой: https://vkhost.github.io/\n"
-                        "2. Выбери 'Kate Mobile'\n"
-                        "3. В поле 'scope' впиши: photos,wall\n"
-                        "4. Нажми 'Получить ссылку' → разреши доступ\n"
-                        "5. Скопируй access_token из адресной строки\n"
-                        "6. Вставь его в Amvera в переменную VK_TOKEN"
-                        f"{'2' if account != 'accessories' else ''}\n"
-                        "7. Перезапусти контейнер"
-                    )
+                print(f"[VK] Ошибка загрузки фото: {e}")
+                report_lines.append(f"❌ Группа {group_id}: ошибка загрузки фото - {e}")
                 continue
 
-        if not attachments:
-            report_lines.append(f"❌ Группа {group_id}: фото не загрузились")
-            continue
-
-        attachments_str = ','.join(attachments)
         try:
-            vk.wall.post(owner_id=gid, message=message_text, attachments=attachments_str)
-            report_lines.append(f"✅ Группа {group_id}: пост отправлен")
-            print(f"[VK] Пост ушёл")
+            vk.wall.post(
+                owner_id=-gid,
+                from_group=0,
+                message=message_text,
+                attachments=','.join(attachments)
+            )
+            print(f"[VK] Успешно отправлено в группу {group_id}")
+            report_lines.append(f"✅ Группа {group_id}: отправлено")
         except Exception as e:
-            report_lines.append(f"❌ Группа {group_id}: ошибка постинга — {e}")
-            print(f"[VK] Ошибка постинга: {e}")
+            print(f"[VK] Ошибка отправки: {e}")
+            report_lines.append(f"❌ Группа {group_id}: {e}")
 
     print("=" * 60)
-    
-    # Формируем основной отчёт
-    main_report = '\n'.join(report_lines)
-    
-    # Формируем дополнительную информацию
-    account_name = "Аксессуары" if account == 'accessories' else "Дианы"
-    category_name = "Обычные" if category == 'usual' else "Крупные"
-    
-    info_block = (
-        f"\n\n📊 Информация об отправке:\n"
-        f"👤 Отправлено через аккаунт: {account_name}\n"
-        f"📁 В группы: {category_name}"
-    )
-    
-    # Возвращаем отчёт + информацию
-    full_report = main_report + info_block
-    
-    return full_report
+    return "\n".join(report_lines)
