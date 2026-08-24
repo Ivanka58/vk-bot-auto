@@ -1,17 +1,21 @@
 import os
-import vk_api
 import requests
 from vk_auth import get_vk_api
 
-def upload_photo_to_wall(vk, path, group_id):
+def upload_photo_to_wall(api, path, group_id):
     gid = abs(int(group_id))
     print(f"[VK] Загрузка {path} для группы {group_id}")
-    upload_data = vk.photos.getWallUploadServer(group_id=gid)
+
+    # Получаем сервер для загрузки на стену
+    upload_data = api.photos.getWallUploadServer(group_id=gid)
     upload_url = upload_data['upload_url']
+
     with open(path, 'rb') as f:
         response = requests.post(upload_url, files={'photo': f}, timeout=30)
     result = response.json()
-    saved = vk.photos.saveWallPhoto(
+
+    # Сохраняем фото на стену
+    saved = api.photos.saveWallPhoto(
         group_id=gid,
         server=result['server'],
         photo=result['photo'],
@@ -44,8 +48,8 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
 
     print(f"[VK] Группы ({account}): {groups}")
 
-    # Получаем VK API через vk_auth (автоматически по логину/паролю или готовому токену)
-    vk = get_vk_api(account)
+    # Получаем VK API через прямую авторизацию
+    api = get_vk_api(account)
 
     report_lines = []
     error_count = 0
@@ -59,26 +63,24 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
         photo_error = None
         for path in photo_paths:
             try:
-                photo = upload_photo_to_wall(vk, path, group_id)
+                photo = upload_photo_to_wall(api, path, group_id)
                 attachments.append(f"photo{photo['owner_id']}_{photo['id']}")
                 print(f"[VK] Фото загружено: photo{photo['owner_id']}_{photo['id']}")
             except Exception as e:
                 photo_error = str(e)
                 print(f"[VK] Ошибка загрузки фото: {e}")
-                break  # Не пытаемся загружать остальные фото если токен не работает
+                break
 
         if photo_error:
             error_count += 1
-            # Сокращаем ошибку для отчета
             short_error = photo_error[:100] + "..." if len(photo_error) > 100 else photo_error
             report_lines.append(f"❌ Гр. {group_id}: {short_error}")
-            # Если ошибка авторизации - прерываем всё
             if "invalid access_token" in photo_error or "authorization failed" in photo_error:
                 break
             continue
 
         try:
-            vk.wall.post(
+            api.wall.post(
                 owner_id=-gid,
                 from_group=0,
                 message=message_text,
@@ -95,14 +97,11 @@ def send_to_vk_groups(message_text, photo_paths, category='usual', account='acce
 
     print("=" * 60)
 
-    # Формируем краткий отчет чтобы не превысить лимит Telegram (4096 символов)
     header = f"📊 Отчет: ✅ {success_count} | ❌ {error_count} | Всего: {len(groups)}\n\n"
     report_text = "\n".join(report_lines)
 
-    # Если отчет слишком длинный - обрезаем
-    max_len = 3800  # запас под header
+    max_len = 3800
     if len(report_text) > max_len:
         report_text = report_text[:max_len] + "\n... (обрезано)"
 
     return header + report_text
-
